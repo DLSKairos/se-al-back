@@ -1,0 +1,38 @@
+{
+  "name": "prueba1gye-back",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon index.js",
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "description": "",
+  "dependencies": {
+    "@simplewebauthn/server": "^13.2.2",
+    "archiver": "^7.0.1",
+    "base64url": "^3.0.1",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "docxtemplater": "^3.67.6",
+    "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "form-data": "^4.0.5",
+    "libreoffice-convert": "^1.7.0",
+    "luxon": "^3.7.2",
+    "moment-timezone": "^0.6.0",
+    "mysql2": "^3.14.5",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^7.0.9",
+    "pdf-lib": "^1.17.1",
+    "pdfkit": "^0.17.2",
+    "pg": "^8.16.3",
+    "pizzip": "^3.2.0",
+    "web-push": "^3.6.7"
+  }
+}
