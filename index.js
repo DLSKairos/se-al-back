@@ -32,6 +32,7 @@ import herramientasMantenimientoAdminRouter from "./routes/administrador_bomberm
 import kitLimpiezaAdminRouter from "./routes/administrador_bomberman/kit_limpieza_admin.js";
 import adminUsuariosRouter from "./routes/administrador/admin_usuarios.js";
 import adminObrasRouter from "./routes/administrador/admin_obras.js";
+import adminDashboardRouter from "./routes/administrador/admin_dashboard.js";
 // adminHorasExtraRouter se importa dinámicamente dentro del IIFE de inicio para
 // garantizar que global.db esté disponible antes de que se evalúe el módulo.
 import webauthnRouter from './routes/webauthn.js';
@@ -635,6 +636,7 @@ app.use("/inspeccion_epcc_bomberman_admin", inspeccionEpccBombermanAdminRouter);
 app.use("/checklist_admin", checklistAdminRouter);
 app.use("/herramientas_mantenimiento_admin", herramientasMantenimientoAdminRouter);
 app.use("/kit_limpieza_admin", kitLimpiezaAdminRouter);
+app.use("/admin/dashboard", adminDashboardRouter);
 app.use("/admin_usuarios", adminUsuariosRouter);
 app.use("/admin_obras", adminObrasRouter);
 // /administrador/admin_horas_extra se monta dentro del IIFE de inicio

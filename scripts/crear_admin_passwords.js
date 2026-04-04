@@ -8,7 +8,7 @@ const { Pool } = pkg;
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false }
+      ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false }
     })
   : new Pool({
       host: process.env.PGHOST || "localhost",
@@ -34,6 +34,6 @@ async function crearPassword(password, rol) {
   console.log("Contraseña creada para rol:", rol);
 }
 
-await crearPassword("", "gruaman");
-await crearPassword("", "bomberman");
+await crearPassword("daleolamse2004", "gruaman");
+await crearPassword("Daleolamse2004", "bomberman");
 await pool.end();
