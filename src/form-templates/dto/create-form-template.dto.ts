@@ -1,0 +1,44 @@
+import {
+  IsBoolean,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
+import { Frequency } from '@prisma/client';
+
+export class CreateFormTemplateDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  name: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsString()
+  @IsOptional()
+  icon?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  category_id: string;
+
+  @IsEnum(Frequency)
+  @IsOptional()
+  data_frequency?: Frequency;
+
+  @IsEnum(Frequency)
+  @IsOptional()
+  signature_frequency?: Frequency;
+
+  @IsBoolean()
+  @IsOptional()
+  export_pdf?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  export_excel?: boolean;
+}

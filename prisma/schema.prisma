@@ -1,0 +1,363 @@
+// Prisma schema — SEÑAL
+// SaaS B2B de automatización de formularios operacionales SST (Colombia)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ORGANIZACIÓN ─────────────────────────────────────────
+
+model Organization {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  created_at DateTime @default(now())
+
+  users             User[]
+  departments       Department[]
+  work_locations    WorkLocation[]
+  form_categories   FormCategory[]
+  form_templates    FormTemplate[]
+  submissions       FormSubmission[]
+  attendance_config AttendanceConfig?
+  webhook_endpoints WebhookEndpoint[]
+  attendance_records AttendanceRecord[]
+
+  @@map("organizations")
+}
+
+model Department {
+  id     String @id @default(cuid())
+  org_id String
+  name   String
+  email  String
+
+  org            Organization   @relation(fields: [org_id], references: [id])
+  work_locations WorkLocation[]
+
+  @@unique([org_id, name])
+  @@map("departments")
+}
+
+model WorkLocation {
+  id            String   @id @default(cuid())
+  org_id        String
+  department_id String?
+  name          String
+  contractor    String
+  lat           Decimal  @db.Decimal(10, 6)
+  lng           Decimal  @db.Decimal(10, 6)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+
+  org              Organization       @relation(fields: [org_id], references: [id])
+  department       Department?        @relation(fields: [department_id], references: [id])
+  users            User[]
+  attendances      AttendanceRecord[]
+  form_submissions FormSubmission[]
+
+  @@unique([org_id, name])
+  @@index([org_id, is_active])
+  @@map("work_locations")
+}
+
+// ─── USUARIOS Y AUTENTICACIÓN ─────────────────────────────
+
+model User {
+  id                    String   @id @default(cuid())
+  org_id                String
+  work_location_id      String?
+  name                  String
+  identification_number String   @unique
+  job_title             String   @default("Sin cargo")
+  role                  UserRole @default(OPERATOR)
+  is_active             Boolean  @default(true)
+  pin_enabled           Boolean  @default(false)
+  pin_hash              String?
+  created_at            DateTime @default(now())
+
+  org                  Organization         @relation(fields: [org_id], references: [id])
+  work_location        WorkLocation?        @relation(fields: [work_location_id], references: [id])
+  webauthn_credentials WebAuthnCredential[]
+  push_subscription    PushSubscription?
+  attendances          AttendanceRecord[]
+  submissions          FormSubmission[]
+  templates_created    FormTemplate[]
+
+  @@index([org_id, is_active])
+  @@map("users")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  OPERATOR
+}
+
+model WebAuthnCredential {
+  id                 String   @id @default(cuid())
+  user_id            String
+  credential_id      String   @unique
+  public_key         String   @db.Text
+  sign_count         Int      @default(0)
+  authenticator_type String?
+  registered_at      DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, credential_id])
+  @@map("webauthn_credentials")
+}
+
+model PushSubscription {
+  user_id      String   @id
+  subscription Json
+  created_at   DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("push_subscriptions")
+}
+
+// ─── ASISTENCIA ───────────────────────────────────────────
+
+model AttendanceConfig {
+  id                   String  @id @default(cuid())
+  org_id               String  @unique
+  is_enabled           Boolean @default(false)
+  standard_daily_hours Float   @default(8.0)
+  night_shift_start    String  @default("21:00")
+  night_shift_end      String  @default("06:00")
+  sunday_surcharge     Boolean @default(true)
+  holiday_surcharge    Boolean @default(true)
+  custom_holidays      Json    @default("[]")
+
+  org Organization @relation(fields: [org_id], references: [id])
+
+  @@map("attendance_config")
+}
+
+model AttendanceRecord {
+  id               String    @id @default(cuid())
+  org_id           String
+  user_id          String
+  work_location_id String?
+  service_date     DateTime  @db.Date
+  entry_time       DateTime  @db.Time(6)
+  exit_time        DateTime? @db.Time(6)
+  lunch_minutes    Int?
+
+  total_minutes         Int?
+  regular_minutes       Int?
+  extra_day_minutes     Int?
+  extra_night_minutes   Int?
+  extra_sunday_minutes  Int?
+  extra_holiday_minutes Int?
+
+  org           Organization  @relation(fields: [org_id], references: [id])
+  user          User          @relation(fields: [user_id], references: [id])
+  work_location WorkLocation? @relation(fields: [work_location_id], references: [id])
+
+  @@index([org_id, service_date])
+  @@index([user_id, service_date])
+  @@map("attendance_records")
+}
+
+// ─── FORM BUILDER ─────────────────────────────────────────
+
+model FormCategory {
+  id         String   @id @default(cuid())
+  org_id     String
+  name       String
+  is_sst     Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  org       Organization   @relation(fields: [org_id], references: [id])
+  templates FormTemplate[]
+
+  @@unique([org_id, name])
+  @@map("form_categories")
+}
+
+model FormTemplate {
+  id                  String             @id @default(cuid())
+  org_id              String
+  category_id         String
+  name                String
+  description         String?
+  icon                String?
+  status              FormTemplateStatus @default(DRAFT)
+  data_frequency      Frequency          @default(ONCE)
+  signature_frequency Frequency          @default(NONE)
+  export_pdf          Boolean            @default(true)
+  export_excel        Boolean            @default(false)
+  created_by          String
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+
+  org           Organization       @relation(fields: [org_id], references: [id])
+  category      FormCategory       @relation(fields: [category_id], references: [id])
+  creator       User               @relation(fields: [created_by], references: [id])
+  fields        FormField[]
+  notifications FormNotification[]
+  submissions   FormSubmission[]
+
+  @@index([org_id, status])
+  @@map("form_templates")
+}
+
+model FormField {
+  id                     String    @id @default(cuid())
+  template_id            String
+  order                  Int
+  label                  String
+  key                    String
+  type                   FieldType
+  required               Boolean   @default(true)
+  default_value          String?
+  options                Json?
+  validations            Json?
+  revalidation_frequency Frequency @default(INHERIT)
+
+  template FormTemplate          @relation(fields: [template_id], references: [id], onDelete: Cascade)
+  values   FormSubmissionValue[]
+
+  @@unique([template_id, key])
+  @@map("form_fields")
+}
+
+model FormNotification {
+  id          String              @id @default(cuid())
+  template_id String
+  trigger     NotificationTrigger
+  recipients  Json
+  channels    Json
+  subject     String?
+  body        String?
+  enabled     Boolean             @default(true)
+
+  template FormTemplate @relation(fields: [template_id], references: [id], onDelete: Cascade)
+
+  @@map("form_notifications")
+}
+
+model FormSubmission {
+  id               String           @id @default(cuid())
+  template_id      String
+  org_id           String
+  submitted_by     String
+  work_location_id String?
+  submitted_at     DateTime         @default(now())
+  status           SubmissionStatus @default(SUBMITTED)
+  period_key       String?
+  data             Json
+  geo_lat          Float?
+  geo_lng          Float?
+
+  template      FormTemplate          @relation(fields: [template_id], references: [id])
+  org           Organization          @relation(fields: [org_id], references: [id])
+  submitter     User                  @relation(fields: [submitted_by], references: [id])
+  work_location WorkLocation?         @relation(fields: [work_location_id], references: [id])
+  values        FormSubmissionValue[]
+  signatures    FormSignature[]
+
+  @@index([template_id, org_id, period_key])
+  @@index([org_id, submitted_at(sort: Desc)])
+  @@map("form_submissions")
+}
+
+model FormSubmissionValue {
+  id            String    @id @default(cuid())
+  submission_id String
+  field_id      String
+  value_text    String?
+  value_number  Float?
+  value_date    DateTime?
+  value_json    Json?
+  value_file    String?
+
+  submission FormSubmission @relation(fields: [submission_id], references: [id], onDelete: Cascade)
+  field      FormField      @relation(fields: [field_id], references: [id])
+
+  @@map("form_submission_values")
+}
+
+model FormSignature {
+  id            String   @id @default(cuid())
+  submission_id String
+  signer_name   String
+  signer_role   String?
+  signer_doc    String?
+  signature_url String
+  signed_at     DateTime @default(now())
+
+  submission FormSubmission @relation(fields: [submission_id], references: [id], onDelete: Cascade)
+
+  @@map("form_signatures")
+}
+
+// ─── ECOSISTEMA KAIROS ────────────────────────────────────
+
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  org_id      String
+  url         String
+  secret      String
+  event_types Json?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  org Organization @relation(fields: [org_id], references: [id])
+
+  @@map("webhook_endpoints")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────
+
+enum FormTemplateStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum FieldType {
+  TEXT
+  NUMBER
+  DATE
+  DATETIME
+  SELECT
+  MULTISELECT
+  BOOLEAN
+  SIGNATURE
+  PHOTO
+  GEOLOCATION
+  FILE
+}
+
+enum Frequency {
+  INHERIT
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+  PER_EVENT
+  ONCE
+}
+
+enum NotificationTrigger {
+  ON_SUBMIT
+  ON_APPROVE
+  ON_REJECT
+  SCHEDULED
+}
+
+enum SubmissionStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
