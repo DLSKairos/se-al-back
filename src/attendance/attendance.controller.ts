@@ -171,9 +171,8 @@ export class AttendanceController {
   }
 
   /**
-   * Exporta el reporte a Excel (descarga directa).
-   * NOTE: cuando el service de exportación de asistencia esté implementado,
-   * reemplazar por attendanceService.exportReport(user.orgId, query).
+   * Exporta el reporte de asistencia a Excel (.xlsx) con desglose de horas extras.
+   * Query params: from, to, user_id (todos opcionales).
    */
   @Roles('ADMIN')
   @Get('report/export')
@@ -182,12 +181,70 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
     @Res({ passthrough: false }) res: Response,
   ) {
-    // Placeholder hasta que attendanceService.exportReport esté implementado
-    const records = await this.attendanceService.findAll(user.orgId, query);
-    const filename = `asistencia-${new Date().toISOString().slice(0, 10)}.json`;
+    const result = await this.attendanceService.findAll(user.orgId, {
+      ...query,
+      limit: 10000, // sin paginación para exportar todo
+    });
 
-    res.setHeader('Content-Type', 'application/json');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ExcelJS = require('exceljs') as typeof import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Asistencia');
+
+    sheet.columns = [
+      { header: 'Trabajador', key: 'worker', width: 30 },
+      { header: 'Fecha', key: 'date', width: 14 },
+      { header: 'Entrada', key: 'entry', width: 10 },
+      { header: 'Salida', key: 'exit', width: 10 },
+      { header: 'Ubicación', key: 'location', width: 25 },
+      { header: 'H. Regulares (min)', key: 'regular', width: 20 },
+      { header: 'Extra Diurna (min)', key: 'extra_day', width: 20 },
+      { header: 'Extra Nocturna (min)', key: 'extra_night', width: 22 },
+      { header: 'Extra Dominical (min)', key: 'extra_sunday', width: 22 },
+      { header: 'Extra Festiva (min)', key: 'extra_holiday', width: 22 },
+    ];
+
+    // Estilo de cabecera
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E3A5F' },
+    };
+    sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+
+    const records: any[] = Array.isArray(result)
+      ? result
+      : (result as any).data ?? [];
+
+    for (const r of records) {
+      const toTime = (d: Date | null) =>
+        d ? new Date(d).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' }) : '—';
+
+      sheet.addRow({
+        worker: r.user?.name ?? r.user_id,
+        date: r.service_date
+          ? new Date(r.service_date).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })
+          : '—',
+        entry: toTime(r.entry_time),
+        exit: toTime(r.exit_time),
+        location: r.work_location?.name ?? '—',
+        regular: r.regular_minutes ?? 0,
+        extra_day: r.extra_day_minutes ?? 0,
+        extra_night: r.extra_night_minutes ?? 0,
+        extra_sunday: r.extra_sunday_minutes ?? 0,
+        extra_holiday: r.extra_holiday_minutes ?? 0,
+      });
+    }
+
+    const filename = `asistencia-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(JSON.stringify(records));
+
+    await workbook.xlsx.write(res);
+    res.end();
   }
 }

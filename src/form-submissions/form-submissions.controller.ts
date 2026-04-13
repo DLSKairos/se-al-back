@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { FormSubmissionsService } from './form-submissions.service';
+import { FormSubmissionsStatsService } from './form-submissions-stats.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { SubmissionQueryDto } from './dto/submission-query.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -25,7 +26,25 @@ import { SubmissionStatus } from '@prisma/client';
 export class FormSubmissionsController {
   constructor(
     private readonly formSubmissionsService: FormSubmissionsService,
+    private readonly statsService: FormSubmissionsStatsService,
   ) {}
+
+  /**
+   * Devuelve estadísticas agregadas para el dashboard de administrador.
+   * Sin templateId → agrega todos los templates de la org.
+   * Con templateId → filtra para ese template específico.
+   * Debe estar declarado ANTES de /:id y /context/:templateId.
+   */
+  @Roles('ADMIN')
+  @Get('stats')
+  getStats(
+    @CurrentUser() user: JwtPayload,
+    @Query('templateId') templateId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.statsService.getStats(user.orgId, templateId, from, to);
+  }
 
   /**
    * Devuelve el contexto necesario para renderizar un formulario:
