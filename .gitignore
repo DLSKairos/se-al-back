@@ -23,6 +23,10 @@ npm-debug.log*
 .idea/
 .vscode/
 
+# Local SSL certs
+localhost.pem
+localhost-key.pem
+
 # Misc
 DOCUMENTACION TECNICA FRONTEND.md
 

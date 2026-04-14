@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -100,6 +101,36 @@ export class PinService {
 
     this.rateLimiter.resetLimit(ip);
     return user;
+  }
+
+  /**
+   * Crea el PIN inicial de un usuario que aún no tiene PIN.
+   * Solo se permite si pin_hash === null (nunca ha tenido PIN).
+   * Retorna el usuario actualizado para que AuthService genere el JWT.
+   */
+  async initPin(identificationNumber: string, pin: string): Promise<User> {
+    this.validatePinFormat(pin);
+
+    const user = await this.prisma.user.findUnique({
+      where: { identification_number: identificationNumber },
+    });
+
+    if (!user || !user.is_active) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+
+    if (user.pin_hash !== null) {
+      throw new ConflictException(
+        'Este usuario ya tiene PIN. Usa /auth/pin/verify para ingresar.',
+      );
+    }
+
+    const pin_hash = await bcrypt.hash(pin, BCRYPT_ROUNDS);
+
+    return this.prisma.user.update({
+      where: { id: user.id },
+      data: { pin_hash, pin_enabled: true },
+    });
   }
 
   private validatePinFormat(pin: string): void {

@@ -195,6 +195,7 @@ model FormTemplate {
   signature_frequency Frequency          @default(NONE)
   export_pdf          Boolean            @default(true)
   export_excel        Boolean            @default(false)
+  target_job_titles   String[]           @default([])
   created_by          String
   created_at          DateTime           @default(now())
   updated_at          DateTime           @updatedAt

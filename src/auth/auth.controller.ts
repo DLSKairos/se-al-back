@@ -42,6 +42,17 @@ export class AuthController {
   }
 
   /**
+   * Crea el PIN inicial de un usuario sin PIN previo y devuelve access_token.
+   * Solo funciona si el usuario nunca tuvo PIN (pin_hash === null).
+   * Fallback cuando WebAuthn no está disponible en el dispositivo.
+   */
+  @Public()
+  @Post('pin/init')
+  pinInit(@Body() dto: PinVerifyDto) {
+    return this.authService.initPinAndLogin(dto.identification_number, dto.pin);
+  }
+
+  /**
    * Verifica el PIN y devuelve un access_token JWT.
    * La IP se extrae del request para el rate-limiter.
    */

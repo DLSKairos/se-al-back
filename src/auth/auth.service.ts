@@ -15,6 +15,15 @@ export class AuthService {
 
   // ─── PIN ───────────────────────────────────────────────────────────────────
 
+  async initPinAndLogin(
+    identificationNumber: string,
+    pin: string,
+  ): Promise<{ access_token: string; user: UserPublic }> {
+    const user = await this.pinService.initPin(identificationNumber, pin);
+    const access_token = this.generateJwt(user);
+    return { access_token, user: this.toPublic(user) };
+  }
+
   async loginWithPin(
     identificationNumber: string,
     pin: string,
@@ -48,6 +57,7 @@ export class AuthService {
       sub: user.id,
       orgId: user.org_id,
       role: user.role,
+      jobTitle: user.job_title,
     });
   }
 

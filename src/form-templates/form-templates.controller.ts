@@ -30,7 +30,7 @@ export class FormTemplatesController {
    */
   @Get()
   findActive(@CurrentUser() user: JwtPayload) {
-    return this.formTemplatesService.findActive(user.orgId);
+    return this.formTemplatesService.findActive(user.orgId, user.role, user.jobTitle);
   }
 
   /**

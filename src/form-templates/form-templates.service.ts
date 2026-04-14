@@ -14,8 +14,18 @@ export class FormTemplatesService {
 
   // ─── Consultas ─────────────────────────────────────────────────────────────
 
-  async findActive(orgId: string) {
-    return this.prisma.formTemplate.findMany({
+  /**
+   * Retorna templates ACTIVOS aplicando filtro por cargo cuando el usuario
+   * es OPERATOR.
+   *
+   * Reglas:
+   * - SUPER_ADMIN / ADMIN → ven todos los templates activos.
+   * - OPERATOR con target_job_titles vacío → template visible para todos.
+   * - OPERATOR con target_job_titles no vacío → solo si su job_title está
+   *   en el array (comparación case-insensitive).
+   */
+  async findActive(orgId: string, userRole: string, userJobTitle: string) {
+    const templates = await this.prisma.formTemplate.findMany({
       where: { org_id: orgId, status: FormTemplateStatus.ACTIVE },
       include: {
         category: true,
@@ -23,6 +33,18 @@ export class FormTemplatesService {
       },
       orderBy: { name: 'asc' },
     });
+
+    if (userRole === 'OPERATOR') {
+      const normalizedJobTitle = userJobTitle.toLowerCase().trim();
+      return templates.filter((t) => {
+        if (t.target_job_titles.length === 0) return true;
+        return t.target_job_titles.some(
+          (title) => title.toLowerCase().trim() === normalizedJobTitle,
+        );
+      });
+    }
+
+    return templates;
   }
 
   async findAllAdmin(orgId: string) {
@@ -78,6 +100,7 @@ export class FormTemplatesService {
         signature_frequency: dto.signature_frequency ?? 'NONE',
         export_pdf: dto.export_pdf ?? true,
         export_excel: dto.export_excel ?? false,
+        target_job_titles: dto.target_job_titles ?? [],
         status: FormTemplateStatus.DRAFT,
       },
       include: { category: true },
@@ -103,6 +126,9 @@ export class FormTemplatesService {
         ...(dto.export_pdf !== undefined && { export_pdf: dto.export_pdf }),
         ...(dto.export_excel !== undefined && {
           export_excel: dto.export_excel,
+        }),
+        ...(dto.target_job_titles !== undefined && {
+          target_job_titles: dto.target_job_titles,
         }),
         // El status NO se puede cambiar aquí — usar changeStatus()
       },

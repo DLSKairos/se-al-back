@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsEnum,
   IsNotEmpty,
@@ -41,4 +42,14 @@ export class CreateFormTemplateDto {
   @IsBoolean()
   @IsOptional()
   export_excel?: boolean;
+
+  /**
+   * Cargos a los que se restringe el template.
+   * Array vacío (o ausente) → visible para todos los operarios.
+   * Ej: ["operario de grúas", "rigger"]
+   */
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  target_job_titles?: string[];
 }
