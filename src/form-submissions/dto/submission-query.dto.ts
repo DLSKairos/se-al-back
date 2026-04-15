@@ -11,6 +11,10 @@ import {
 import { SubmissionStatus } from '@prisma/client';
 
 export class SubmissionQueryDto {
+  @IsString()
+  @IsOptional()
+  search?: string;
+
   @IsDateString()
   @IsOptional()
   from?: string;

@@ -165,7 +165,6 @@ export class WebAuthnService {
   async verifyAuthentication(
     identificationNumber: string,
     response: AuthenticationResponseJSON,
-    expectedChallenge: string,
   ): Promise<User> {
     const user = await this.prisma.user.findUnique({
       where: { identification_number: identificationNumber },
@@ -180,7 +179,7 @@ export class WebAuthnService {
       `webauthn:challenge:${user.id}`,
     );
 
-    if (!storedChallenge || storedChallenge !== expectedChallenge) {
+    if (!storedChallenge) {
       throw new BadRequestException('Challenge inválido o expirado');
     }
 
@@ -196,7 +195,7 @@ export class WebAuthnService {
     try {
       verification = await verifyAuthenticationResponse({
         response,
-        expectedChallenge,
+        expectedChallenge: storedChallenge,
         expectedOrigin: this.origin,
         expectedRPID: this.rpId,
         credential: {

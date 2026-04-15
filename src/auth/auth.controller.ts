@@ -97,10 +97,10 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('webauthn/register/finish')
   webAuthnRegisterFinish(
-    @Body() body: Record<string, unknown>,
+    @Body('attestationResponse') attestationResponse: Record<string, unknown>,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.webAuthnService.verifyRegistration(user.sub, body as any);
+    return this.webAuthnService.verifyRegistration(user.sub, attestationResponse as any);
   }
 
   /**
@@ -124,13 +124,11 @@ export class AuthController {
   @Post('webauthn/login/finish')
   webAuthnLoginFinish(
     @Body('identification_number') identificationNumber: string,
-    @Body('response') response: Record<string, unknown>,
-    @Body('challenge') challenge: string,
+    @Body('assertionResponse') assertionResponse: Record<string, unknown>,
   ) {
     return this.authService.loginWithWebAuthn(
       identificationNumber,
-      response as any, // AuthenticationResponseJSON
-      challenge,
+      assertionResponse as any,
     );
   }
 }

@@ -139,6 +139,12 @@ export class FormSubmissionsService {
     if (query.template_id) where['template_id'] = query.template_id;
     if (query.user_id) where['submitted_by'] = query.user_id;
     if (query.status) where['status'] = query.status;
+    if (query.search) {
+      where['OR'] = [
+        { template: { name: { contains: query.search, mode: 'insensitive' } } },
+        { submitter: { name: { contains: query.search, mode: 'insensitive' } } },
+      ];
+    }
 
     if (query.from || query.to) {
       where['submitted_at'] = {

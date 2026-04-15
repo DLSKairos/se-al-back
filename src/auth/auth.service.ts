@@ -39,12 +39,10 @@ export class AuthService {
   async loginWithWebAuthn(
     identificationNumber: string,
     webauthnResponse: AuthenticationResponseJSON,
-    expectedChallenge: string,
   ): Promise<{ access_token: string; user: UserPublic }> {
     const user = await this.webAuthnService.verifyAuthentication(
       identificationNumber,
       webauthnResponse,
-      expectedChallenge,
     );
     const access_token = this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };
