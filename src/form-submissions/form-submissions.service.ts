@@ -59,12 +59,12 @@ export class FormSubmissionsService {
     // Construir snapshot data = { [field.key]: value }
     const data: Record<string, unknown> = {};
     for (const field of template.fields) {
-      data[field.key] = dto.values[field.key] ?? null;
+      data[field.key] = dto.data[field.key] ?? null;
     }
 
     // Construir los FormSubmissionValue por cada campo
     const valuesToCreate = template.fields.map((field) => {
-      const rawValue = dto.values[field.key];
+      const rawValue = dto.data[field.key];
       return this.buildValueRecord(field.id, rawValue);
     });
 

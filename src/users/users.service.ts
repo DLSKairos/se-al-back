@@ -71,9 +71,9 @@ export class UsersService {
         org_id: orgId,
         name: dto.name,
         identification_number: dto.identification_number,
-        job_title: dto.job_title ?? 'Sin cargo',
+        job_title: dto.job_title || 'Sin cargo',
         role: (dto.role as UserRole) ?? UserRole.OPERATOR,
-        work_location_id: dto.work_location_id ?? null,
+        work_location_id: dto.work_location_id || null,
       },
       include: { work_location: true },
     });
@@ -137,6 +137,21 @@ export class UsersService {
     await this.prisma.user.update({
       where: { id },
       data: { is_active: false },
+    });
+  }
+
+  async listWebAuthnCredentials(userId: string, orgId: string) {
+    await this.assertExists(userId, orgId);
+
+    return this.prisma.webAuthnCredential.findMany({
+      where: { user_id: userId },
+      select: {
+        id: true,
+        credential_id: true,
+        authenticator_type: true,
+        registered_at: true,
+      },
+      orderBy: { registered_at: 'desc' },
     });
   }
 

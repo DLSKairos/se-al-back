@@ -16,7 +16,7 @@ export class CreateSubmissionDto {
   work_location_id?: string;
 
   @IsObject()
-  values: Record<string, unknown>;
+  data: Record<string, unknown>;
 
   @IsNumber()
   @IsOptional()

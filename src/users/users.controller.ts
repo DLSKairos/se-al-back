@@ -84,9 +84,20 @@ export class UsersController {
   }
 
   /**
+   * Lista las credenciales WebAuthn del usuario.
+   */
+  @Get(':id/webauthn/credentials')
+  listWebAuthnCredentials(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.usersService.listWebAuthnCredentials(id, user.orgId);
+  }
+
+  /**
    * Revoca una credencial WebAuthn específica del usuario.
    */
-  @Delete(':id/webauthn/:credId')
+  @Delete(':id/webauthn/credentials/:credId')
   revokeWebAuthnCredential(
     @Param('id') id: string,
     @Param('credId') credId: string,
