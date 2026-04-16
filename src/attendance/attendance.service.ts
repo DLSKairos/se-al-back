@@ -119,11 +119,19 @@ export class AttendanceService {
     }
 
     const exitTime = new Date();
+
+    // La constraint de BD requiere lunch_minutes IS NULL OR >= 1.
+    // 0 significa "sin almuerzo", que se guarda como NULL.
+    const lunchForCalc  = lunchMinutes ?? record.lunch_minutes ?? null;
+    const lunchForStore = lunchMinutes != null && lunchMinutes > 0
+      ? lunchMinutes
+      : (record.lunch_minutes ?? null);
+
     const overtime = this.overtimeService.calculateOvertime(
       record.entry_time,
       exitTime,
       record.service_date,
-      lunchMinutes ?? record.lunch_minutes ?? null,
+      lunchForCalc,
       config,
     );
 
@@ -131,7 +139,7 @@ export class AttendanceService {
       where: { id: record.id },
       data: {
         exit_time: exitTime,
-        lunch_minutes: lunchMinutes ?? record.lunch_minutes,
+        lunch_minutes: lunchForStore,
         total_minutes: overtime.totalMinutes,
         regular_minutes: overtime.regularMinutes,
         extra_day_minutes: overtime.extraDayMinutes,

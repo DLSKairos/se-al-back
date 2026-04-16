@@ -164,6 +164,7 @@ model AttendanceRecord {
 
   @@index([org_id, service_date])
   @@index([user_id, service_date])
+  @@index([user_id, org_id, service_date])
   @@map("attendance_records")
 }
 

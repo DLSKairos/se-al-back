@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AttendanceConfig } from '@prisma/client';
-import { DateTime, Duration } from 'luxon';
+import { DateTime } from 'luxon';
 
 export interface OvertimeResult {
   totalMinutes: number;
@@ -18,11 +18,11 @@ export class AttendanceOvertimeService {
   /**
    * Calcula los minutos regulares y extra clasificados por tipo.
    *
-   * @param entryTime  - Hora de entrada (Date)
-   * @param exitTime   - Hora de salida (Date)
-   * @param serviceDate - Fecha del servicio (Date) — se usa solo para determinar día de semana y festivos
-   * @param lunchMinutes - Minutos de almuerzo a descontar (puede ser null)
-   * @param config     - Configuración de asistencia de la organización
+   * IMPORTANTE: Prisma mapea columnas PostgreSQL TIME(6) a objetos Date de JavaScript
+   * anclados en 1970-01-01. Si se pasa directamente un entryTime de base de datos
+   * junto a un exitTime = new Date(), la diferencia sería ~56 años en lugar de horas,
+   * causando un loop de millones de iteraciones que congela el event loop de Node.js.
+   * Por eso reconstruimos ambos timestamps sobre service_date antes de calcular.
    */
   calculateOvertime(
     entryTime: Date,
@@ -31,20 +31,45 @@ export class AttendanceOvertimeService {
     lunchMinutes: number | null,
     config: AttendanceConfig,
   ): OvertimeResult {
-    const entry = DateTime.fromJSDate(entryTime).setZone(TIMEZONE);
-    const exit = DateTime.fromJSDate(exitTime).setZone(TIMEZONE);
-    const svcDate = DateTime.fromJSDate(serviceDate).setZone(TIMEZONE);
+    // Anclar ambos timestamps a service_date en la zona horaria correcta.
+    // Esto neutraliza el desajuste de fechas cuando entryTime proviene de un
+    // campo TIME(6) de Prisma (anclado en 1970-01-01) y exitTime es new Date().
+    //
+    // Nota: Prisma lee campos @db.Date como medianoche UTC (e.g. "2026-04-15T00:00:00Z"),
+    // lo cual al convertir a Bogotá (UTC-5) daría el día anterior. Extraemos el string
+    // de fecha directamente en UTC para evitar ese desfase.
+    const dateStr = DateTime.fromJSDate(serviceDate, { zone: 'utc' }).toISODate()!;
+    const svcBase = DateTime.fromISO(dateStr, { zone: TIMEZONE }).startOf('day');
 
-    // 1. Calcular total de minutos trabajados
-    const rawMinutes = exit.diff(entry, 'minutes').minutes;
-    const totalMinutes = Math.max(
-      0,
-      Math.round(rawMinutes) - (lunchMinutes ?? 0),
-    );
+    const entryLocal = DateTime.fromJSDate(entryTime).setZone(TIMEZONE);
+    const exitLocal  = DateTime.fromJSDate(exitTime).setZone(TIMEZONE);
+
+    const entry = svcBase.set({
+      hour:        entryLocal.hour,
+      minute:      entryLocal.minute,
+      second:      entryLocal.second,
+      millisecond: 0,
+    });
+
+    let exit = svcBase.set({
+      hour:        exitLocal.hour,
+      minute:      exitLocal.minute,
+      second:      exitLocal.second,
+      millisecond: 0,
+    });
+
+    // Turno nocturno que cruza medianoche: la salida pertenece al día siguiente
+    if (exit <= entry) {
+      exit = exit.plus({ days: 1 });
+    }
+
+    // 1. Total de minutos trabajados (descontando almuerzo)
+    const rawMinutes   = exit.diff(entry, 'minutes').minutes;
+    const totalMinutes = Math.max(0, Math.round(rawMinutes) - (lunchMinutes ?? 0));
 
     // 2. Minutos regulares = mínimo entre trabajados y la jornada estándar
     const standardMinutes = Math.round(config.standard_daily_hours * 60);
-    const regularMinutes = Math.min(totalMinutes, standardMinutes);
+    const regularMinutes  = Math.min(totalMinutes, standardMinutes);
 
     // 3. Minutos extra
     const extraMinutes = Math.max(0, totalMinutes - regularMinutes);
@@ -53,24 +78,24 @@ export class AttendanceOvertimeService {
       return {
         totalMinutes,
         regularMinutes,
-        extraDayMinutes: 0,
-        extraNightMinutes: 0,
-        extraSundayMinutes: 0,
+        extraDayMinutes:     0,
+        extraNightMinutes:   0,
+        extraSundayMinutes:  0,
         extraHolidayMinutes: 0,
       };
     }
 
-    // 4. Clasificar extras según día y horario
-    const isSunday = svcDate.weekday === 7; // luxon: 1=lun, 7=dom
-    const isHoliday = this.isHoliday(svcDate, config);
+    // 4. Clasificar según tipo de día
+    const isSunday  = svcBase.weekday === 7; // luxon: 1=lun … 7=dom
+    const isHoliday = this.isHoliday(svcBase, config);
 
     if (isSunday) {
       return {
         totalMinutes,
         regularMinutes,
-        extraDayMinutes: 0,
-        extraNightMinutes: 0,
-        extraSundayMinutes: extraMinutes,
+        extraDayMinutes:     0,
+        extraNightMinutes:   0,
+        extraSundayMinutes:  extraMinutes,
         extraHolidayMinutes: 0,
       };
     }
@@ -79,17 +104,16 @@ export class AttendanceOvertimeService {
       return {
         totalMinutes,
         regularMinutes,
-        extraDayMinutes: 0,
-        extraNightMinutes: 0,
-        extraSundayMinutes: 0,
+        extraDayMinutes:     0,
+        extraNightMinutes:   0,
+        extraSundayMinutes:  0,
         extraHolidayMinutes: extraMinutes,
       };
     }
 
-    // 5. Si no es domingo ni festivo, clasificar por tramo nocturno
+    // 5. Clasificar extras entre diurno y nocturno mediante intersección de intervalos (O(1))
     const { extraDayMinutes, extraNightMinutes } = this.classifyByShift(
       entry,
-      exit,
       extraMinutes,
       standardMinutes,
       config.night_shift_start,
@@ -101,75 +125,94 @@ export class AttendanceOvertimeService {
       regularMinutes,
       extraDayMinutes,
       extraNightMinutes,
-      extraSundayMinutes: 0,
+      extraSundayMinutes:  0,
       extraHolidayMinutes: 0,
     };
   }
 
-  // ─── Helpers privados ──────────────────────────────────────────────────────
+  // ─── Helpers privados ────────────────────────────────────────────────────────
 
   private isHoliday(date: DateTime, config: AttendanceConfig): boolean {
     const holidays = config.custom_holidays as string[];
     if (!Array.isArray(holidays) || holidays.length === 0) return false;
-    const dateStr = date.toISODate(); // "YYYY-MM-DD"
-    return holidays.includes(dateStr!);
+    return holidays.includes(date.toISODate()!);
   }
 
   /**
-   * Clasifica los minutos extra entre diurnos y nocturnos.
-   * Recorre el turno completo en franjas de 1 minuto a partir del momento
-   * en que terminan los minutos regulares, contando cuántos caen en horario nocturno.
-   *
-   * Enfoque simplificado y preciso: analiza minuto a minuto los tramos extra.
+   * Clasifica los minutos extra entre diurnos y nocturnos usando intersección
+   * de intervalos — O(días cubiertos) en lugar del antiguo loop minuto a minuto.
    */
   private classifyByShift(
     entry: DateTime,
-    exit: DateTime,
     extraMinutes: number,
     standardMinutes: number,
     nightStart: string,
     nightEnd: string,
   ): { extraDayMinutes: number; extraNightMinutes: number } {
-    // El tramo extra comienza cuando termina la jornada regular
-    const extraStart = entry.plus(Duration.fromMillis(standardMinutes * 60_000));
+    const [nsH, nsM] = nightStart.split(':').map(Number);
+    const [neH, neM] = nightEnd.split(':').map(Number);
+    const nsTotal = nsH * 60 + nsM;
+    const neTotal = neH * 60 + neM;
+    const crossesMidnight = nsTotal > neTotal;
 
-    let nightCount = 0;
+    const extraStart = entry.plus({ minutes: standardMinutes });
+    const extraEnd   = extraStart.plus({ minutes: extraMinutes });
 
-    for (let i = 0; i < extraMinutes; i++) {
-      const moment = extraStart.plus(Duration.fromMillis(i * 60_000));
-      if (this.isNightTime(moment, nightStart, nightEnd)) {
-        nightCount++;
-      }
-    }
+    const nightCount = this.computeNightOverlap(
+      extraStart,
+      extraEnd,
+      nsTotal,
+      neTotal,
+      crossesMidnight,
+    );
+
+    const extraNightMinutes = Math.min(nightCount, extraMinutes);
 
     return {
-      extraNightMinutes: nightCount,
-      extraDayMinutes: extraMinutes - nightCount,
+      extraNightMinutes,
+      extraDayMinutes: extraMinutes - extraNightMinutes,
     };
   }
 
   /**
-   * Determina si un instante cae en horario nocturno.
-   * Maneja el cruce de medianoche: ej. 21:00 → 06:00.
+   * Calcula los minutos de solapamiento entre el intervalo [start, end] y la
+   * ventana nocturna configurada, manejando el cruce de medianoche y tramos
+   * que abarcan varios días calendario.
    */
-  private isNightTime(
-    moment: DateTime,
-    nightStart: string,
-    nightEnd: string,
-  ): boolean {
-    const [nsHour, nsMin] = nightStart.split(':').map(Number);
-    const [neHour, neMin] = nightEnd.split(':').map(Number);
+  private computeNightOverlap(
+    start: DateTime,
+    end: DateTime,
+    nightStartMins: number,
+    nightEndMins: number,
+    crossesMidnight: boolean,
+  ): number {
+    let total = 0;
+    let day      = start.startOf('day');
+    const lastDay = end.startOf('day');
 
-    const currentMinutes = moment.hour * 60 + moment.minute;
-    const startMinutes = nsHour * 60 + nsMin;
-    const endMinutes = neHour * 60 + neMin;
+    while (day <= lastDay) {
+      const windows: Array<[DateTime, DateTime]> = crossesMidnight
+        ? [
+            // Tramo vespertino: desde nightStart hasta medianoche
+            [day.plus({ minutes: nightStartMins }), day.plus({ days: 1 })],
+            // Tramo matutino: desde medianoche hasta nightEnd de ese día
+            [day, day.plus({ minutes: nightEndMins })],
+          ]
+        : [
+            [day.plus({ minutes: nightStartMins }), day.plus({ minutes: nightEndMins })],
+          ];
 
-    if (startMinutes > endMinutes) {
-      // Cruza medianoche: nocturno si >= start O < end
-      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
-    } else {
-      // No cruza medianoche: nocturno si >= start Y < end
-      return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+      for (const [wStart, wEnd] of windows) {
+        const oStart = start > wStart ? start : wStart;
+        const oEnd   = end   < wEnd   ? end   : wEnd;
+        if (oStart < oEnd) {
+          total += Math.round(oEnd.diff(oStart, 'minutes').minutes);
+        }
+      }
+
+      day = day.plus({ days: 1 });
     }
+
+    return total;
   }
 }
