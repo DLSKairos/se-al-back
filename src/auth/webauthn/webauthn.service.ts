@@ -40,7 +40,7 @@ export class WebAuthnService {
     );
   }
 
-  // ─── Registro ──────────────────────────────────────────────────────────────
+  // ─── Registro (autenticado vía JWT) ───────────────────────────────────────
 
   async generateRegistrationOptions(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -123,6 +123,106 @@ export class WebAuthnService {
     });
 
     await this.redis.del(`webauthn:challenge:${userId}`);
+  }
+
+  // ─── Registro inicial (público, sin JWT) ───────────────────────────────────
+
+  async generateRegistrationOptionsByIdentification(identificationNumber: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { identification_number: identificationNumber },
+      include: { webauthn_credentials: true },
+    });
+
+    if (!user || !user.is_active) {
+      throw new NotFoundException('Usuario no encontrado o inactivo');
+    }
+
+    if (user.webauthn_credentials.length > 0) {
+      throw new BadRequestException('El usuario ya tiene credenciales biométricas registradas');
+    }
+
+    const options = await generateRegistrationOptions({
+      rpName: this.rpName,
+      rpID: this.rpId,
+      userName: user.identification_number,
+      userDisplayName: user.name,
+      userID: new TextEncoder().encode(user.id),
+      attestationType: 'none',
+      excludeCredentials: [],
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred',
+      },
+    });
+
+    await this.redis.set(
+      `webauthn:challenge:${user.id}`,
+      options.challenge,
+      CHALLENGE_TTL_SECONDS,
+    );
+
+    return options;
+  }
+
+  async verifyRegistrationByIdentification(
+    identificationNumber: string,
+    response: RegistrationResponseJSON,
+  ): Promise<User> {
+    const user = await this.prisma.user.findUnique({
+      where: { identification_number: identificationNumber },
+      include: { webauthn_credentials: true },
+    });
+
+    if (!user || !user.is_active) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+
+    if (user.webauthn_credentials.length > 0) {
+      throw new BadRequestException('El usuario ya tiene credenciales biométricas registradas');
+    }
+
+    const storedChallenge = await this.redis.get(
+      `webauthn:challenge:${user.id}`,
+    );
+
+    if (!storedChallenge) {
+      throw new BadRequestException('Challenge inválido o expirado');
+    }
+
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response,
+        expectedChallenge: storedChallenge,
+        expectedOrigin: this.origin,
+        expectedRPID: this.rpId,
+      });
+    } catch (err) {
+      throw new BadRequestException(
+        `Error al verificar registro WebAuthn: ${(err as Error).message}`,
+      );
+    }
+
+    if (!verification.verified || !verification.registrationInfo) {
+      throw new BadRequestException('Verificación de registro fallida');
+    }
+
+    const { credential, credentialDeviceType, credentialBackedUp } =
+      verification.registrationInfo;
+
+    await this.prisma.webAuthnCredential.create({
+      data: {
+        user_id: user.id,
+        credential_id: credential.id,
+        public_key: Buffer.from(credential.publicKey as Uint8Array).toString('base64'),
+        sign_count: credential.counter,
+        authenticator_type: `${credentialDeviceType}${credentialBackedUp ? ':backed_up' : ''}`,
+      },
+    });
+
+    await this.redis.del(`webauthn:challenge:${user.id}`);
+
+    return user;
   }
 
   // ─── Autenticación ─────────────────────────────────────────────────────────

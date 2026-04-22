@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import { PinService } from './pin/pin.service';
 import { WebAuthnService } from './webauthn/webauthn.service';
-import type { AuthenticationResponseJSON } from '@simplewebauthn/server';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 @Injectable()
 export class AuthService {
@@ -41,6 +41,18 @@ export class AuthService {
     webauthnResponse: AuthenticationResponseJSON,
   ): Promise<{ access_token: string; user: UserPublic }> {
     const user = await this.webAuthnService.verifyAuthentication(
+      identificationNumber,
+      webauthnResponse,
+    );
+    const access_token = this.generateJwt(user);
+    return { access_token, user: this.toPublic(user) };
+  }
+
+  async registerWebAuthnAndLogin(
+    identificationNumber: string,
+    webauthnResponse: RegistrationResponseJSON,
+  ): Promise<{ access_token: string; user: UserPublic }> {
+    const user = await this.webAuthnService.verifyRegistrationByIdentification(
       identificationNumber,
       webauthnResponse,
     );

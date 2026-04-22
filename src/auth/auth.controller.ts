@@ -104,6 +104,31 @@ export class AuthController {
   }
 
   /**
+   * Registro biométrico inicial sin JWT.
+   * Solo funciona si el usuario no tiene credenciales biométricas previas.
+   */
+  @Public()
+  @Post('webauthn/register-init/begin')
+  webAuthnRegisterInitBegin(
+    @Body('identification_number') identificationNumber: string,
+  ) {
+    return this.webAuthnService.generateRegistrationOptionsByIdentification(identificationNumber);
+  }
+
+  /**
+   * Verifica el registro biométrico inicial y devuelve access_token.
+   * Combina el registro con el login en un solo paso.
+   */
+  @Public()
+  @Post('webauthn/register-init/finish')
+  webAuthnRegisterInitFinish(
+    @Body('identification_number') identificationNumber: string,
+    @Body('attestationResponse') attestationResponse: Record<string, unknown>,
+  ) {
+    return this.authService.registerWebAuthnAndLogin(identificationNumber, attestationResponse as any);
+  }
+
+  /**
    * Genera opciones de autenticación WebAuthn para el login sin contraseña.
    */
   @Public()
