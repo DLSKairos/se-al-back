@@ -2,6 +2,8 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -52,4 +54,55 @@ export class CreateFormTemplateDto {
   @IsString({ each: true })
   @IsOptional()
   target_job_titles?: string[];
+
+  /**
+   * Número de columnas del layout del formulario (1, 2 o 3).
+   */
+  @IsOptional()
+  @IsInt()
+  @IsIn([1, 2, 3])
+  columns?: number;
+
+  /**
+   * URL del archivo fuente (PDF, imagen) usado para construir el formulario.
+   */
+  @IsOptional()
+  @IsString()
+  source_file_url?: string;
+
+  /**
+   * Metadata de secciones del formulario (Section[]).
+   */
+  @IsOptional()
+  @IsArray()
+  sections?: any[];
+
+  /**
+   * Campos del formulario (EditorField[]) para batch create junto con el template.
+   */
+  @IsOptional()
+  @IsArray()
+  fields?: any[];
+
+  /**
+   * Si true, guarda además una copia como blueprint privado del tenant.
+   */
+  @IsOptional()
+  @IsBoolean()
+  save_as_blueprint?: boolean;
+
+  /**
+   * Nombre del blueprint a crear (requerido si save_as_blueprint = true).
+   */
+  @IsOptional()
+  @IsString()
+  blueprint_name?: string;
+
+  /**
+   * Nombre de la categoría para el blueprint (fallback "General").
+   * Independiente de category_id — se usa solo si save_as_blueprint = true.
+   */
+  @IsOptional()
+  @IsString()
+  category_name?: string;
 }

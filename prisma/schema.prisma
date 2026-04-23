@@ -17,14 +17,15 @@ model Organization {
   name       String   @unique
   created_at DateTime @default(now())
 
-  users             User[]
-  departments       Department[]
-  work_locations    WorkLocation[]
-  form_categories   FormCategory[]
-  form_templates    FormTemplate[]
-  submissions       FormSubmission[]
-  attendance_config AttendanceConfig?
-  webhook_endpoints WebhookEndpoint[]
+  users              User[]
+  departments        Department[]
+  work_locations     WorkLocation[]
+  form_categories    FormCategory[]
+  form_templates     FormTemplate[]
+  form_blueprints    FormBlueprint[]
+  submissions        FormSubmission[]
+  attendance_config  AttendanceConfig?
+  webhook_endpoints  WebhookEndpoint[]
   attendance_records AttendanceRecord[]
 
   @@map("organizations")
@@ -197,6 +198,9 @@ model FormTemplate {
   export_pdf          Boolean            @default(true)
   export_excel        Boolean            @default(false)
   target_job_titles   String[]           @default([])
+  columns             Int                @default(1)
+  source_file_url     String?
+  sections            Json?
   created_by          String
   created_at          DateTime           @default(now())
   updated_at          DateTime           @updatedAt
@@ -224,6 +228,9 @@ model FormField {
   options                Json?
   validations            Json?
   revalidation_frequency Frequency @default(INHERIT)
+  section                String?
+  placeholder            String?
+  help_text              String?
 
   template FormTemplate          @relation(fields: [template_id], references: [id], onDelete: Cascade)
   values   FormSubmissionValue[]
@@ -300,6 +307,26 @@ model FormSignature {
   submission FormSubmission @relation(fields: [submission_id], references: [id], onDelete: Cascade)
 
   @@map("form_signatures")
+}
+
+// ─── FORM BLUEPRINTS ──────────────────────────────────────
+
+model FormBlueprint {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  category    String
+  is_global   Boolean   @default(false)
+  org_id      String?
+  fields      Json
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  organization Organization? @relation(fields: [org_id], references: [id])
+
+  @@index([is_global])
+  @@index([org_id])
+  @@map("form_blueprints")
 }
 
 // ─── ECOSISTEMA KAIROS ────────────────────────────────────

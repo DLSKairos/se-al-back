@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { FormTemplateStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ensureUniqueKeys } from '../common/utils/form-keys.util';
 import { CreateFormTemplateDto } from './dto/create-form-template.dto';
 import { UpdateFormTemplateDto } from './dto/update-form-template.dto';
 
@@ -88,51 +89,128 @@ export class FormTemplatesService {
     createdBy: string,
     dto: CreateFormTemplateDto,
   ) {
-    return this.prisma.formTemplate.create({
-      data: {
-        org_id: orgId,
-        created_by: createdBy,
-        name: dto.name,
-        description: dto.description ?? null,
-        icon: dto.icon ?? null,
-        category_id: dto.category_id,
-        data_frequency: dto.data_frequency ?? 'ONCE',
-        signature_frequency: dto.signature_frequency ?? 'NONE',
-        export_pdf: dto.export_pdf ?? true,
-        export_excel: dto.export_excel ?? false,
-        target_job_titles: dto.target_job_titles ?? [],
-        status: FormTemplateStatus.DRAFT,
-      },
-      include: { category: true },
+    return this.prisma.$transaction(async (tx) => {
+      const template = await tx.formTemplate.create({
+        data: {
+          org_id: orgId,
+          created_by: createdBy,
+          name: dto.name,
+          description: dto.description ?? null,
+          icon: dto.icon ?? null,
+          category_id: dto.category_id,
+          data_frequency: dto.data_frequency ?? 'ONCE',
+          signature_frequency: dto.signature_frequency ?? 'NONE',
+          export_pdf: dto.export_pdf ?? true,
+          export_excel: dto.export_excel ?? false,
+          target_job_titles: dto.target_job_titles ?? [],
+          status: FormTemplateStatus.DRAFT,
+          columns: dto.columns ?? 1,
+          source_file_url: dto.source_file_url ?? null,
+          sections: dto.sections ?? undefined,
+        },
+      });
+
+      if (dto.fields?.length) {
+        const uniqueFields = ensureUniqueKeys(dto.fields);
+        await tx.formField.createMany({
+          data: uniqueFields.map((f, i) => ({
+            template_id: template.id,
+            order: i,
+            label: f.label,
+            key: f.key,
+            type: f.type ?? 'TEXT',
+            required: f.required ?? true,
+            options: f.options ?? null,
+            section: f.section ?? null,
+            placeholder: f.placeholder ?? null,
+            help_text: f.helpText ?? null,
+          })),
+        });
+      }
+
+      if (dto.save_as_blueprint && dto.blueprint_name) {
+        await tx.formBlueprint.create({
+          data: {
+            name: dto.blueprint_name,
+            category: dto.category_name ?? 'General',
+            org_id: orgId,
+            is_global: false,
+            fields: dto.fields ?? [],
+          },
+        });
+      }
+
+      return tx.formTemplate.findUnique({
+        where: { id: template.id },
+        include: {
+          fields: { orderBy: { order: 'asc' } },
+          category: true,
+          notifications: true,
+        },
+      });
     });
   }
 
   async update(id: string, orgId: string, dto: UpdateFormTemplateDto) {
     await this.assertExists(id, orgId);
 
-    return this.prisma.formTemplate.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.description !== undefined && { description: dto.description }),
-        ...(dto.icon !== undefined && { icon: dto.icon }),
-        ...(dto.category_id !== undefined && { category_id: dto.category_id }),
-        ...(dto.data_frequency !== undefined && {
-          data_frequency: dto.data_frequency,
-        }),
-        ...(dto.signature_frequency !== undefined && {
-          signature_frequency: dto.signature_frequency,
-        }),
-        ...(dto.export_pdf !== undefined && { export_pdf: dto.export_pdf }),
-        ...(dto.export_excel !== undefined && {
-          export_excel: dto.export_excel,
-        }),
-        ...(dto.target_job_titles !== undefined && {
-          target_job_titles: dto.target_job_titles,
-        }),
-        // El status NO se puede cambiar aquí — usar changeStatus()
-      },
-      include: { category: true, fields: { orderBy: { order: 'asc' } } },
+    return this.prisma.$transaction(async (tx) => {
+      const template = await tx.formTemplate.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.description !== undefined && { description: dto.description }),
+          ...(dto.icon !== undefined && { icon: dto.icon }),
+          ...(dto.category_id !== undefined && { category_id: dto.category_id }),
+          ...(dto.data_frequency !== undefined && {
+            data_frequency: dto.data_frequency,
+          }),
+          ...(dto.signature_frequency !== undefined && {
+            signature_frequency: dto.signature_frequency,
+          }),
+          ...(dto.export_pdf !== undefined && { export_pdf: dto.export_pdf }),
+          ...(dto.export_excel !== undefined && {
+            export_excel: dto.export_excel,
+          }),
+          ...(dto.target_job_titles !== undefined && {
+            target_job_titles: dto.target_job_titles,
+          }),
+          ...(dto.columns !== undefined && { columns: dto.columns }),
+          ...(dto.source_file_url !== undefined && {
+            source_file_url: dto.source_file_url,
+          }),
+          ...(dto.sections !== undefined && { sections: dto.sections }),
+          // El status NO se puede cambiar aquí — usar changeStatus()
+        },
+      });
+
+      if (dto.fields !== undefined) {
+        // Borrar campos existentes y recrear con los nuevos, garantizando unicidad de keys
+        await tx.formField.deleteMany({ where: { template_id: id } });
+
+        if (dto.fields.length > 0) {
+          const uniqueFields = ensureUniqueKeys(dto.fields);
+          await tx.formField.createMany({
+            data: uniqueFields.map((f, i) => ({
+              template_id: template.id,
+              order: i,
+              label: f.label,
+              key: f.key,
+              type: f.type ?? 'TEXT',
+              required: f.required ?? true,
+              options: f.options ?? null,
+              section: f.section ?? null,
+              placeholder: f.placeholder ?? null,
+              help_text: f.helpText ?? null,
+            })),
+          });
+        }
+      }
+
+      return tx.formTemplate.findUnique({
+        where: { id: template.id },
+        include: { category: true, fields: { orderBy: { order: 'asc' } } },
+      });
     });
   }
 

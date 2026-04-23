@@ -19,6 +19,8 @@ import { FormNotificationsModule } from './form-notifications/form-notifications
 import { FormExportsModule } from './form-exports/form-exports.module';
 import { PushNotificationsModule } from './push-notifications/push-notifications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { FormBlueprintsModule } from './form-blueprints/form-blueprints.module';
+import { FormAiModule } from './form-ai/form-ai.module';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     FormSignaturesModule,
     FormNotificationsModule,
     FormExportsModule,
+    FormBlueprintsModule,
+    FormAiModule,
     PushNotificationsModule,
     WebhooksModule,
   ],
