@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import { PinService } from './pin/pin.service';
 import { WebAuthnService } from './webauthn/webauthn.service';
+import { PrismaService } from '../prisma/prisma.service';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly pinService: PinService,
     private readonly webAuthnService: WebAuthnService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ─── PIN ───────────────────────────────────────────────────────────────────
@@ -20,7 +22,7 @@ export class AuthService {
     pin: string,
   ): Promise<{ access_token: string; user: UserPublic }> {
     const user = await this.pinService.initPin(identificationNumber, pin);
-    const access_token = this.generateJwt(user);
+    const access_token = await this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };
   }
 
@@ -30,7 +32,7 @@ export class AuthService {
     ip: string,
   ): Promise<{ access_token: string; user: UserPublic }> {
     const user = await this.pinService.verifyPin(identificationNumber, pin, ip);
-    const access_token = this.generateJwt(user);
+    const access_token = await this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };
   }
 
@@ -44,7 +46,7 @@ export class AuthService {
       identificationNumber,
       webauthnResponse,
     );
-    const access_token = this.generateJwt(user);
+    const access_token = await this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };
   }
 
@@ -56,16 +58,21 @@ export class AuthService {
       identificationNumber,
       webauthnResponse,
     );
-    const access_token = this.generateJwt(user);
+    const access_token = await this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };
   }
 
   // ─── JWT ───────────────────────────────────────────────────────────────────
 
-  generateJwt(user: User): string {
+  async generateJwt(user: User): Promise<string> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: user.org_id },
+      select: { name: true },
+    });
     return this.jwtService.sign({
       sub: user.id,
       orgId: user.org_id,
+      orgName: org?.name ?? '',
       role: user.role,
       jobTitle: user.job_title,
     });

@@ -260,7 +260,15 @@ export class FormTemplatesService {
   }
 
   async remove(id: string, orgId: string): Promise<void> {
-    await this.changeStatus(id, orgId, FormTemplateStatus.ARCHIVED);
+    const template = await this.assertExists(id, orgId);
+
+    if (template.status !== FormTemplateStatus.DRAFT) {
+      throw new BadRequestException(
+        'Solo se pueden eliminar formularios en estado borrador. Archiva el formulario si ya fue publicado.',
+      );
+    }
+
+    await this.prisma.formTemplate.delete({ where: { id } });
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
