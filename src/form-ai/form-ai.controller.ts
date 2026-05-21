@@ -4,6 +4,7 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -13,6 +14,7 @@ import { memoryStorage } from 'multer';
 import { FormAiService } from './form-ai.service';
 import { GenerateFromDescriptionDto } from './dto/generate-from-description.dto';
 import { AiAssistDto } from './dto/ai-assist.dto';
+import { AdminChatDto } from './dto/admin-chat.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -65,5 +67,11 @@ export class FormAiController {
   @HttpCode(HttpStatus.OK)
   assist(@Body() dto: AiAssistDto) {
     return this.formAiService.assist(dto);
+  }
+
+  @Post('admin-chat')
+  @HttpCode(HttpStatus.OK)
+  adminChat(@Body() dto: AdminChatDto, @Req() req: any) {
+    return this.formAiService.adminChat(req.user.orgId, dto.message, dto.history);
   }
 }

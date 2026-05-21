@@ -5,6 +5,7 @@ const pdfParse = require('pdf-parse');
 import * as mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { FileStorageService } from './file-storage.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { mapAiTypeToDB } from './field-type.map';
 import {
   EXTRACT_SYSTEM_PROMPT,
@@ -22,7 +23,10 @@ export class FormAiService {
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
 
-  constructor(private readonly fileStorage: FileStorageService) {}
+  constructor(
+    private readonly fileStorage: FileStorageService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   // ─── Extracción desde archivo ──────────────────────────────────────────────
 
@@ -148,6 +152,121 @@ export class FormAiService {
         payload: null,
         aiError: true,
         message: 'No pude procesar tu solicitud. Intenta de nuevo.',
+      };
+    }
+  }
+
+  // ─── Admin Chat ───────────────────────────────────────────────────────────
+
+  async adminChat(
+    orgId: string,
+    message: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  ) {
+    try {
+      const [
+        totalUsers,
+        activeUsers,
+        statusCounts,
+        activeTemplates,
+        recentSubmissions,
+      ] = await Promise.all([
+        this.prisma.user.count({ where: { org_id: orgId } }),
+        this.prisma.user.count({ where: { org_id: orgId, is_active: true } }),
+        this.prisma.formSubmission.groupBy({
+          by: ['status'],
+          where: { org_id: orgId },
+          _count: { status: true },
+        }),
+        this.prisma.formTemplate.findMany({
+          where: { org_id: orgId, status: 'ACTIVE' },
+          select: { id: true, name: true, category: { select: { name: true } } },
+        }),
+        this.prisma.formSubmission.findMany({
+          where: { org_id: orgId },
+          orderBy: { submitted_at: 'desc' },
+          take: 5,
+          select: {
+            id: true,
+            status: true,
+            submitted_at: true,
+            submitter: { select: { name: true } },
+            template: { select: { name: true } },
+          },
+        }),
+      ]);
+
+      const byStatus: Record<string, number> = {};
+      for (const row of statusCounts) {
+        byStatus[row.status] = row._count.status;
+      }
+      const totalSubmissions = Object.values(byStatus).reduce((a, b) => a + b, 0);
+      const approved = byStatus['APPROVED'] ?? 0;
+      const pending = byStatus['SUBMITTED'] ?? 0;
+      const rejected = byStatus['REJECTED'] ?? 0;
+      const draft = byStatus['DRAFT'] ?? 0;
+      const approvalRate =
+        totalSubmissions > 0
+          ? ((approved / totalSubmissions) * 100).toFixed(1)
+          : '0';
+
+      const recentList = recentSubmissions
+        .map(
+          (s) =>
+            `- ${s.submitter?.name ?? 'Desconocido'} envió "${s.template?.name ?? '?'}" (${s.status}) el ${s.submitted_at.toLocaleDateString('es-CO')}`,
+        )
+        .join('\n');
+
+      const templateList = activeTemplates
+        .map(
+          (t) =>
+            `- "${t.name}" (categoría: ${t.category?.name ?? 'Sin categoría'})`,
+        )
+        .join('\n');
+
+      const systemPrompt = `Eres SEÑALIA, el asistente inteligente de SEÑAL para administradores. Tienes acceso a los datos reales de la organización y respondes en español de forma concisa y útil. Usa markdown para formatear tu respuesta cuando ayude a la comprensión.
+
+DATOS ACTUALES DE LA ORGANIZACIÓN:
+
+Usuarios:
+- Total registrados: ${totalUsers}
+- Usuarios activos: ${activeUsers}
+- Usuarios inactivos: ${totalUsers - activeUsers}
+
+Envíos de formularios:
+- Total: ${totalSubmissions}
+- Aprobados: ${approved}
+- Pendientes de revisión: ${pending}
+- Rechazados: ${rejected}
+- En borrador: ${draft}
+- Tasa de aprobación: ${approvalRate}%
+
+Formularios activos (${activeTemplates.length}):
+${templateList || '- No hay formularios activos aún'}
+
+Últimos 5 envíos:
+${recentList || '- No hay envíos recientes'}
+
+Responde únicamente con base en estos datos. Si el administrador pregunta algo que no puedes responder con esta información, dilo claramente.`;
+
+      const allMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+        ...history,
+        { role: 'user', content: message },
+      ];
+
+      const response = await this.anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: allMessages,
+      });
+
+      return { response: (response.content[0] as { text: string }).text };
+    } catch (err) {
+      console.error('[AdminChat] Error:', err);
+      return {
+        response:
+          'Lo siento, ocurrió un error al procesar tu pregunta. Por favor intenta de nuevo.',
       };
     }
   }
