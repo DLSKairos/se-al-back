@@ -185,25 +185,64 @@ export class FormTemplatesService {
       });
 
       if (dto.fields !== undefined) {
-        // Borrar campos existentes y recrear con los nuevos, garantizando unicidad de keys
-        await tx.formField.deleteMany({ where: { template_id: id } });
+        const uniqueFields = ensureUniqueKeys(dto.fields);
 
-        if (dto.fields.length > 0) {
-          const uniqueFields = ensureUniqueKeys(dto.fields);
-          await tx.formField.createMany({
-            data: uniqueFields.map((f, i) => ({
-              template_id: template.id,
-              order: i,
-              label: f.label,
-              key: f.key,
-              type: f.type ?? 'TEXT',
-              required: f.required ?? true,
-              options: f.options ?? null,
-              section: f.section ?? null,
-              placeholder: f.placeholder ?? null,
-              help_text: f.helpText ?? null,
-            })),
-          });
+        // IDs que vienen del frontend (solo los que tienen ID válido)
+        const incomingIds = uniqueFields
+          .map((f) => f.id as string | undefined)
+          .filter((fid): fid is string => !!fid);
+
+        // Campos que ya existen en BD para este template
+        const existingFields = await tx.formField.findMany({
+          where: { template_id: id },
+          select: { id: true },
+        });
+        const existingIds = existingFields.map((f) => f.id);
+
+        // IDs a eliminar = los que ya existían y no vienen en el payload
+        const toDeleteIds = existingIds.filter((eid) => !incomingIds.includes(eid));
+
+        if (toDeleteIds.length > 0) {
+          // Solo borrar los que no tienen valores en submissions (FK sin cascade)
+          const referencedIds = (
+            await tx.formSubmissionValue.findMany({
+              where: { field_id: { in: toDeleteIds } },
+              select: { field_id: true },
+              distinct: ['field_id'],
+            })
+          ).map((v) => v.field_id);
+
+          const safeToDelete = toDeleteIds.filter((did) => !referencedIds.includes(did));
+          if (safeToDelete.length > 0) {
+            await tx.formField.deleteMany({ where: { id: { in: safeToDelete } } });
+          }
+        }
+
+        // Upsert cada campo preservando su ID (evita romper FK de submissions)
+        for (const [i, f] of uniqueFields.entries()) {
+          const fieldData = {
+            order: i,
+            label: f.label,
+            key: f.key,
+            type: f.type ?? 'TEXT',
+            required: f.required ?? true,
+            options: f.options ?? null,
+            section: f.section ?? null,
+            placeholder: f.placeholder ?? null,
+            help_text: f.helpText ?? null,
+          };
+
+          if (f.id && incomingIds.includes(f.id)) {
+            await tx.formField.upsert({
+              where: { id: f.id },
+              update: fieldData,
+              create: { id: f.id, template_id: template.id, ...fieldData },
+            });
+          } else {
+            await tx.formField.create({
+              data: { template_id: template.id, ...fieldData },
+            });
+          }
         }
       }
 
