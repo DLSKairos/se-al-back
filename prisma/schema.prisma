@@ -26,7 +26,8 @@ model Organization {
   submissions        FormSubmission[]
   attendance_config  AttendanceConfig?
   webhook_endpoints  WebhookEndpoint[]
-  attendance_records AttendanceRecord[]
+  attendance_records  AttendanceRecord[]
+  inventario_sessions InventarioSession[]
 
   @@map("organizations")
 }
@@ -343,6 +344,104 @@ model WebhookEndpoint {
   org Organization @relation(fields: [org_id], references: [id])
 
   @@map("webhook_endpoints")
+}
+
+// ─── INVENTARIOS ADUANEROS ─────────────────────────────────
+
+model InventarioSession {
+  id                  String    @id @default(cuid())
+  org_id              String
+  tipo_formulario     String    @default("acta_inspeccion_previa")
+  estado              String    @default("borrador")
+
+  // Cabecera operacional
+  agencia_aduanas     String?
+  codigo_agencia      String?
+  representante_legal String?
+  mandato             String?
+  deposito            String?
+  direccion_deposito  String?
+  documento_transporte String?
+  manifiesto          String?
+  fecha_manifiesto    DateTime?
+  transportadora      String?
+  consignatario       String?
+  no_bultos           Int?
+  peso                Float?
+  precintos_retira    String?
+  precintos_coloca    String?
+  observaciones       String?   @db.Text
+
+  // Firmas
+  firmado_deposito_nombre String?
+  firmado_agencia_nombre  String?
+  firmado_deposito_url    String?
+  firmado_agencia_url     String?
+  firmado_deposito_at     DateTime?
+  firmado_agencia_at      DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  org    Organization     @relation(fields: [org_id], references: [id])
+  items  InventarioItem[]
+  fotos  InventarioFoto[]
+
+  @@index([org_id, estado])
+  @@index([org_id, created_at(sort: Desc)])
+  @@map("inventario_sessions")
+}
+
+model InventarioItem {
+  id              String  @id @default(cuid())
+  session_id      String
+  numero          Int
+  parte_no        String?
+  pais            String?
+  descripcion     String? @db.Text
+  marca           String?
+  modelo          String?
+  serial          String?
+  cantidad        Int?
+  extraido_por_ia Boolean @default(false)
+  tipo_novedad    String?
+
+  session    InventarioSession     @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  accesorios InventarioAccesorio[]
+  fotos      InventarioFoto[]
+
+  @@index([session_id])
+  @@map("inventario_items")
+}
+
+model InventarioAccesorio {
+  id          String  @id @default(cuid())
+  item_id     String
+  parte_no    String?
+  pais        String?
+  descripcion String?
+  marca       String?
+  modelo      String?
+
+  item InventarioItem @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@index([item_id])
+  @@map("inventario_accesorios")
+}
+
+model InventarioFoto {
+  id         String   @id @default(cuid())
+  session_id String
+  item_id    String?
+  tipo       String
+  url        String
+  created_at DateTime @default(now())
+
+  session InventarioSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  item    InventarioItem?   @relation(fields: [item_id], references: [id], onDelete: SetNull)
+
+  @@index([session_id, tipo])
+  @@map("inventario_fotos")
 }
 
 // ─── ENUMS ────────────────────────────────────────────────

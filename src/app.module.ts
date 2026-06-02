@@ -21,6 +21,7 @@ import { PushNotificationsModule } from './push-notifications/push-notifications
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { FormBlueprintsModule } from './form-blueprints/form-blueprints.module';
 import { FormAiModule } from './form-ai/form-ai.module';
+import { InventariosModule } from './inventarios/inventarios.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { FormAiModule } from './form-ai/form-ai.module';
     FormExportsModule,
     FormBlueprintsModule,
     FormAiModule,
+    InventariosModule,
     PushNotificationsModule,
     WebhooksModule,
   ],
