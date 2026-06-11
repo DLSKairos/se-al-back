@@ -1,0 +1,22 @@
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
+
+export class QueryNotificationsDto {
+  @IsOptional()
+  @Transform(({ value }: { value: string }) => value === 'true')
+  @IsBoolean()
+  unreadOnly?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }: { value: string }) => parseInt(value, 10))
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Transform(({ value }: { value: string }) => parseInt(value, 10))
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 20;
+}

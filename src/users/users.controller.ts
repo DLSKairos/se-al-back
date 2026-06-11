@@ -17,6 +17,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { PlanLimitsGuard } from '../common/guards/plan-limits.guard';
+import { PlanLimitResource } from '../common/decorators/plan-limit-resource.decorator';
 import { JwtPayload } from '../auth/dto/jwt-payload.dto';
 import { IsNotEmpty, IsString, Matches } from 'class-validator';
 
@@ -46,9 +48,12 @@ export class UsersController {
 
   /**
    * Crea un nuevo usuario dentro de la organización.
+   * PlanLimitsGuard verifica que no se supere el límite del plan antes de crear.
    */
   @Roles('ADMIN')
   @Post()
+  @UseGuards(PlanLimitsGuard)
+  @PlanLimitResource('users')
   create(@Body() dto: CreateUserDto, @CurrentUser() user: JwtPayload) {
     return this.usersService.create(user.orgId, dto);
   }

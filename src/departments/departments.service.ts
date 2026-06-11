@@ -11,13 +11,29 @@ import { UpdateDepartmentDto } from './dto/update-department.dto';
 export class DepartmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Devuelve los departamentos visibles para una organización:
+   * - Los propios de la org (org_id === orgId, active = true)
+   * - Los globales de Kairos (org_id = null, active = true)
+   * Los globales no se pueden editar ni eliminar desde aquí (solo desde seed).
+   */
   async findAll(orgId: string) {
     return this.prisma.department.findMany({
-      where: { org_id: orgId },
+      where: {
+        OR: [
+          { org_id: orgId, active: true },
+          { org_id: null, active: true },
+        ],
+      },
       orderBy: { name: 'asc' },
     });
   }
 
+  /**
+   * Busca un departamento por id verificando que pertenezca a la org.
+   * Los departamentos globales (org_id = null) no son accesibles por este método
+   * (no se pueden editar/eliminar desde un admin de org).
+   */
   async findOne(id: string, orgId: string) {
     const dept = await this.prisma.department.findFirst({
       where: { id, org_id: orgId },
@@ -30,6 +46,11 @@ export class DepartmentsService {
     return dept;
   }
 
+  /**
+   * Crea un departamento propio de la organización.
+   * Los departamentos globales solo los crea Kairos desde seed.
+   * Verifica duplicado contra los propios de la org (no contra globales).
+   */
   async create(orgId: string, dto: CreateDepartmentDto) {
     const existing = await this.prisma.department.findFirst({
       where: { org_id: orgId, name: dto.name },
@@ -50,6 +71,10 @@ export class DepartmentsService {
     });
   }
 
+  /**
+   * Actualiza un departamento propio de la org.
+   * Garantiza que solo se puedan actualizar departamentos de la propia org.
+   */
   async update(id: string, orgId: string, dto: UpdateDepartmentDto) {
     await this.findOne(id, orgId);
 
@@ -62,6 +87,11 @@ export class DepartmentsService {
     });
   }
 
+  /**
+   * Elimina (soft delete: active = false) un departamento propio de la org.
+   * No permite eliminar departamentos globales (son de Kairos).
+   * No permite eliminar si tiene obras asociadas activas.
+   */
   async remove(id: string, orgId: string): Promise<void> {
     await this.findOne(id, orgId);
 
@@ -75,6 +105,9 @@ export class DepartmentsService {
       );
     }
 
-    await this.prisma.department.delete({ where: { id } });
+    await this.prisma.department.update({
+      where: { id },
+      data: { active: false },
+    });
   }
 }

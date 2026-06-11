@@ -17,31 +17,38 @@ model Organization {
   name       String   @unique
   created_at DateTime @default(now())
 
-  users              User[]
-  departments        Department[]
-  work_locations     WorkLocation[]
-  form_categories    FormCategory[]
-  form_templates     FormTemplate[]
-  form_blueprints    FormBlueprint[]
-  submissions        FormSubmission[]
-  attendance_config  AttendanceConfig?
-  webhook_endpoints  WebhookEndpoint[]
+  users               User[]
+  departments         Department[]
+  work_locations      WorkLocation[]
+  form_categories     FormCategory[]
+  form_templates      FormTemplate[]
+  form_blueprints     FormBlueprint[]
+  submissions         FormSubmission[]
+  attendance_config   AttendanceConfig?
+  webhook_endpoints   WebhookEndpoint[]
   attendance_records  AttendanceRecord[]
   inventario_sessions InventarioSession[]
+  external_signers         ExternalSigner[]
+  config                   OrgConfig?
+  master_positions         MasterPosition[]
+  master_roles             MasterRole[]
+  master_list_suggestions  MasterListSuggestion[]
 
   @@map("organizations")
 }
 
 model Department {
-  id     String @id @default(cuid())
-  org_id String
+  id     String  @id @default(cuid())
+  org_id String?          // null = global (seed de Kairos)
   name   String
-  email  String
+  email  String?          // no aplica para globales
+  active Boolean @default(true)
 
-  org            Organization   @relation(fields: [org_id], references: [id])
+  org            Organization?  @relation(fields: [org_id], references: [id])
   work_locations WorkLocation[]
 
   @@unique([org_id, name])
+  @@index([org_id, active])
   @@map("departments")
 }
 
@@ -61,6 +68,7 @@ model WorkLocation {
   users            User[]
   attendances      AttendanceRecord[]
   form_submissions FormSubmission[]
+  external_signers ExternalSigner[]
 
   @@unique([org_id, name])
   @@index([org_id, is_active])
@@ -70,17 +78,24 @@ model WorkLocation {
 // ─── USUARIOS Y AUTENTICACIÓN ─────────────────────────────
 
 model User {
-  id                    String   @id @default(cuid())
+  id                    String         @id @default(cuid())
   org_id                String
   work_location_id      String?
   name                  String
-  identification_number String   @unique
-  job_title             String   @default("Sin cargo")
-  role                  UserRole @default(OPERATOR)
-  is_active             Boolean  @default(true)
-  pin_enabled           Boolean  @default(false)
+  identification_number String         @unique
+  email                 String?        @unique
+  job_title             String         @default("Sin cargo")
+  role                  UserRole       @default(OPERATOR)
+  is_active             Boolean        @default(true)
+  pin_enabled           Boolean        @default(false)
   pin_hash              String?
-  created_at            DateTime @default(now())
+  oauth_provider        OAuthProvider?
+  oauth_provider_id     String?
+  oauth_access_token    String?        @db.Text
+  oauth_refresh_token   String?        @db.Text
+  last_oauth_sync       DateTime?
+  position_id           String?
+  created_at            DateTime       @default(now())
 
   org                  Organization         @relation(fields: [org_id], references: [id])
   work_location        WorkLocation?        @relation(fields: [work_location_id], references: [id])
@@ -89,8 +104,18 @@ model User {
   attendances          AttendanceRecord[]
   submissions          FormSubmission[]
   templates_created    FormTemplate[]
+  notifications                Notification[]       @relation("UserNotifications")
+  sent_notifications           Notification[]       @relation("AdminCreatedNotifications")
+  internal_signature_records   SignatureRecord[]    @relation("InternalSignerRecords")
+  magic_link_tokens            MagicLinkToken[]     @relation("UserMagicLinks")
+  org_config_updates           OrgConfig[]          @relation("SuperAdminOrgConfigUpdates")
+  position                     MasterPosition?      @relation("UserPosition", fields: [position_id], references: [id], onDelete: SetNull)
+  suggestions_made             MasterListSuggestion[] @relation("SuggestedByUser")
+  suggestions_reviewed         MasterListSuggestion[] @relation("ReviewedByUser")
+  rejected_submissions         FormSubmission[]     @relation("RejectedByAdmin")
 
   @@index([org_id, is_active])
+  @@index([oauth_provider, oauth_provider_id])
   @@map("users")
 }
 
@@ -206,12 +231,13 @@ model FormTemplate {
   created_at          DateTime           @default(now())
   updated_at          DateTime           @updatedAt
 
-  org           Organization       @relation(fields: [org_id], references: [id])
-  category      FormCategory       @relation(fields: [category_id], references: [id])
-  creator       User               @relation(fields: [created_by], references: [id])
-  fields        FormField[]
-  notifications FormNotification[]
-  submissions   FormSubmission[]
+  org              Organization       @relation(fields: [org_id], references: [id])
+  category         FormCategory       @relation(fields: [category_id], references: [id])
+  creator          User               @relation(fields: [created_by], references: [id])
+  fields           FormField[]
+  notifications    FormNotification[]
+  submissions      FormSubmission[]
+  signature_config SignatureConfig?
 
   @@index([org_id, status])
   @@map("form_templates")
@@ -269,12 +295,20 @@ model FormSubmission {
   geo_lng          Float?
   review_notes     String?
 
-  template      FormTemplate          @relation(fields: [template_id], references: [id])
-  org           Organization          @relation(fields: [org_id], references: [id])
-  submitter     User                  @relation(fields: [submitted_by], references: [id])
-  work_location WorkLocation?         @relation(fields: [work_location_id], references: [id])
-  values        FormSubmissionValue[]
-  signatures    FormSignature[]
+  auto_approved_at     DateTime?
+  rejected_at          DateTime?
+  rejected_by_admin_id String?
+  rejection_reason     String?   @db.Text
+
+  template          FormTemplate          @relation(fields: [template_id], references: [id])
+  org               Organization          @relation(fields: [org_id], references: [id])
+  submitter         User                  @relation(fields: [submitted_by], references: [id])
+  work_location     WorkLocation?         @relation(fields: [work_location_id], references: [id])
+  rejected_by_admin User?                 @relation("RejectedByAdmin", fields: [rejected_by_admin_id], references: [id], onDelete: SetNull)
+  values            FormSubmissionValue[]
+  signatures        FormSignature[]
+  signature_tokens  SignatureToken[]
+  signature_records SignatureRecord[]
 
   @@index([template_id, org_id, period_key])
   @@index([org_id, submitted_at(sort: Desc)])
@@ -445,7 +479,262 @@ model InventarioFoto {
   @@map("inventario_fotos")
 }
 
+// ─── LISTAS MAESTRAS ─────────────────────────────────────
+
+model MasterPosition {
+  id         String    @id @default(cuid())
+  org_id     String?           // null = global (seed de Kairos)
+  name       String
+  active     Boolean   @default(true)
+  created_at DateTime  @default(now())
+
+  org   Organization? @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  users User[]        @relation("UserPosition")
+
+  @@unique([org_id, name])
+  @@index([org_id, active])
+  @@map("master_positions")
+}
+
+model MasterRole {
+  id         String    @id @default(cuid())
+  org_id     String?           // null = global (seed de Kairos)
+  name       String
+  active     Boolean   @default(true)
+  created_at DateTime  @default(now())
+
+  org Organization? @relation(fields: [org_id], references: [id], onDelete: Cascade)
+
+  @@unique([org_id, name])
+  @@index([org_id, active])
+  @@map("master_roles")
+}
+
+model MasterListSuggestion {
+  id           String           @id @default(cuid())
+  org_id       String
+  suggested_by String
+  entity_type  MasterEntityType
+  value        String
+  status       SuggestionStatus @default(PENDING)
+  reviewed_by  String?
+  reviewed_at  DateTime?
+  created_at   DateTime         @default(now())
+
+  org       Organization @relation(fields: [org_id], references: [id])
+  suggester User         @relation("SuggestedByUser", fields: [suggested_by], references: [id])
+  reviewer  User?        @relation("ReviewedByUser", fields: [reviewed_by], references: [id])
+
+  @@index([org_id, status])
+  @@index([suggested_by])
+  @@map("master_list_suggestions")
+}
+
+// ─── PLAN Y CONFIGURACIÓN DE ORG ──────────────────────────
+
+model OrgConfig {
+  id                        String    @id @default(cuid())
+  org_id                    String    @unique
+  plan                      PlanTier  @default(STARTER)
+  max_users                 Int       @default(10)
+  max_sites                 Int       @default(2)
+  display_name              String
+  logo_url                  String?
+  primary_color             String?
+  updated_at                DateTime  @updatedAt
+  updated_by_super_admin_id String?
+
+  org                    Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  updated_by_super_admin User?        @relation("SuperAdminOrgConfigUpdates", fields: [updated_by_super_admin_id], references: [id], onDelete: SetNull)
+
+  @@map("org_configs")
+}
+
+// ─── MAGIC LINK ───────────────────────────────────────────
+
+model MagicLinkToken {
+  id                     String           @id @default(cuid())
+  token                  String           @unique @default(cuid())
+  user_id                String
+  purpose                MagicLinkPurpose
+  expires_at             DateTime
+  used_at                DateTime?
+  created_by_super_admin Boolean          @default(false)
+  created_at             DateTime         @default(now())
+
+  user User @relation("UserMagicLinks", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([user_id])
+  @@map("magic_link_tokens")
+}
+
+// ─── FIRMA ELECTRÓNICA ────────────────────────────────────
+
+model ExternalSigner {
+  id                    String   @id @default(cuid())
+  org_id                String
+  work_location_id      String
+  name                  String
+  identification_number String
+  phone                 String
+  photo_id_key          String?
+  selfie_key            String?
+  is_registered         Boolean  @default(false)
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  org               Organization     @relation(fields: [org_id], references: [id])
+  work_location     WorkLocation     @relation(fields: [work_location_id], references: [id])
+  signature_tokens  SignatureToken[]
+  signature_records SignatureRecord[] @relation("ExternalSignerRecords")
+
+  @@unique([work_location_id, identification_number])
+  @@index([org_id, work_location_id])
+  @@map("external_signers")
+}
+
+model SignatureToken {
+  id                 String              @id @default(cuid())
+  token              String              @unique @default(cuid())
+  submission_id      String
+  external_signer_id String
+  link_status        SignatureLinkStatus @default(SENT)
+  expires_at         DateTime
+  viewed_at          DateTime?
+  used_at            DateTime?
+  created_at         DateTime            @default(now())
+
+  submission       FormSubmission  @relation(fields: [submission_id], references: [id], onDelete: Cascade)
+  external_signer  ExternalSigner  @relation(fields: [external_signer_id], references: [id], onDelete: Cascade)
+  signature_record SignatureRecord? @relation("TokenSignatureRecord")
+
+  @@index([submission_id])
+  @@index([token])
+  @@map("signature_tokens")
+}
+
+model SignatureRecord {
+  id                  String     @id @default(cuid())
+  submission_id       String
+  signer_type         SignerType
+  internal_user_id    String?
+  external_signer_id  String?
+  signature_token_id  String?    @unique
+  ip_address          String?
+  user_agent          String?    @db.Text
+  geo_location        Json?
+  webauthn_session    Boolean    @default(false)
+  reading_log         Json
+  min_reading_seconds Int        @default(30)
+  stroke_image_base64 String     @db.Text
+  stroke_vectors      Json
+  document_hash       String
+  hash_version        Int        @default(1)
+  signed_at           DateTime   @default(now())
+
+  submission      FormSubmission  @relation(fields: [submission_id], references: [id], onDelete: Restrict)
+  internal_user   User?           @relation("InternalSignerRecords", fields: [internal_user_id], references: [id], onDelete: SetNull)
+  external_signer ExternalSigner? @relation("ExternalSignerRecords", fields: [external_signer_id], references: [id], onDelete: SetNull)
+  signature_token SignatureToken? @relation("TokenSignatureRecord", fields: [signature_token_id], references: [id], onDelete: SetNull)
+
+  @@index([submission_id])
+  @@index([internal_user_id])
+  @@index([external_signer_id])
+  @@map("signature_records")
+}
+
+model SignatureConfig {
+  id                     String        @id @default(cuid())
+  template_id            String        @unique
+  signature_mode         SignatureMode @default(FLEXIBLE)
+  min_reading_seconds    Int           @default(30)
+  requires_internal_sign Boolean       @default(true)
+  created_at             DateTime      @default(now())
+  updated_at             DateTime      @updatedAt
+
+  template FormTemplate @relation(fields: [template_id], references: [id], onDelete: Cascade)
+
+  @@map("signature_configs")
+}
+
+// ─── NOTIFICACIONES ───────────────────────────────────────
+
+model Notification {
+  id                  String           @id @default(cuid())
+  user_id             String
+  type                NotificationType
+  title               String
+  body                String           @db.Text
+  read                Boolean          @default(false)
+  read_at             DateTime?
+  deep_link           String?
+  created_at          DateTime         @default(now())
+  created_by_admin_id String?
+
+  user             User  @relation("UserNotifications", fields: [user_id], references: [id], onDelete: Cascade)
+  created_by_admin User? @relation("AdminCreatedNotifications", fields: [created_by_admin_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id, read, created_at(sort: Desc)])
+  @@index([created_by_admin_id])
+  @@map("notifications")
+}
+
 // ─── ENUMS ────────────────────────────────────────────────
+
+enum OAuthProvider {
+  GOOGLE
+  MICROSOFT
+}
+
+enum MasterEntityType {
+  POSITION
+  ROLE
+  DEPARTMENT
+}
+
+enum SuggestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PlanTier {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum MagicLinkPurpose {
+  FIRST_ACCESS_ADMIN
+  ADMIN_INVITE
+}
+
+enum SignerType {
+  INTERNAL
+  EXTERNAL
+}
+
+enum SignatureLinkStatus {
+  SENT
+  VIEWED
+  SIGNED
+}
+
+enum SignatureMode {
+  STRICT
+  FLEXIBLE
+}
+
+enum NotificationType {
+  FORM_SUBMITTED
+  FORM_APPROVED
+  FORM_REJECTED
+  FORM_PENDING_SIGNATURE
+  MAGIC_LINK_SENT
+  SYSTEM_ALERT
+  CUSTOM_ADMIN
+}
 
 enum FormTemplateStatus {
   DRAFT
@@ -487,6 +776,7 @@ enum NotificationTrigger {
 enum SubmissionStatus {
   DRAFT
   SUBMITTED
+  PENDING_SIGNATURES
   APPROVED
   REJECTED
 }

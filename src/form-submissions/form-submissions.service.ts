@@ -1,7 +1,10 @@
 import {
   BadRequestException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { FormTemplate, FormTemplateStatus, Prisma, SubmissionStatus } from '@prisma/client';
@@ -11,13 +14,18 @@ import { FormNotificationsService } from '../form-notifications/form-notificatio
 import { computePeriodKey } from '../common/utils/period-key.util';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { SubmissionQueryDto } from './dto/submission-query.dto';
+import { FormApprovalService } from '../form-approval/form-approval.service';
 
 @Injectable()
 export class FormSubmissionsService {
+  private readonly logger = new Logger(FormSubmissionsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly formValidity: FormValidityService,
     private readonly formNotifications: FormNotificationsService,
+    @Inject(forwardRef(() => FormApprovalService))
+    private readonly formApproval: FormApprovalService,
   ) {}
 
   // ─── Contexto ──────────────────────────────────────────────────────────────
@@ -110,6 +118,16 @@ export class FormSubmissionsService {
         // Silenciar errores de notificación — no deben afectar la respuesta
       });
 
+    // Invocar checkAutoApproval para determinar el estado correcto del submission.
+    // Se ejecuta de forma asíncrona para no bloquear la respuesta al operario.
+    this.formApproval
+      .checkAutoApproval(submission.id)
+      .catch((err: Error) => {
+        this.logger.error(
+          `Error en checkAutoApproval tras crear submission ${submission.id}: ${err.message}`,
+        );
+      });
+
     return submission;
   }
 
@@ -191,6 +209,17 @@ export class FormSubmissionsService {
 
   // ─── Cambio de estado ──────────────────────────────────────────────────────
 
+  /**
+   * Cambia el estado de una submission.
+   *
+   * DECISIÓN: La aprobación es SOLO automática (checkAutoApproval).
+   * - Si se intenta transicionar a APPROVED → ForbiddenException.
+   * - Si se intenta transicionar a REJECTED → se delega a FormApprovalService.reject
+   *   para aplicar la lógica completa (validaciones, notificaciones, auditoría).
+   *
+   * Este endpoint legado se mantiene para compatibilidad con el frontend actual,
+   * pero el rechazo ya no es una operación directa: se delega al nuevo servicio.
+   */
   async changeStatus(
     id: string,
     orgId: string,
@@ -199,6 +228,27 @@ export class FormSubmissionsService {
     userRole: string,
     reason?: string,
   ) {
+    // Bloquear aprobación manual — siempre automática
+    if (status === SubmissionStatus.APPROVED) {
+      throw new ForbiddenException(
+        'La aprobación es automática. No es posible aprobar manualmente un envío.',
+      );
+    }
+
+    // Redirigir rechazo al nuevo flujo con validaciones completas
+    if (status === SubmissionStatus.REJECTED) {
+      if (userRole !== 'ADMIN' && userRole !== 'SUPER_ADMIN') {
+        throw new ForbiddenException(
+          'Solo los administradores pueden rechazar envíos',
+        );
+      }
+
+      await this.formApproval.reject(id, userId, orgId, reason ?? '');
+
+      return this.prisma.formSubmission.findUnique({ where: { id } });
+    }
+
+    // Otras transiciones de estado (ej: DRAFT → SUBMITTED)
     const submission = await this.prisma.formSubmission.findFirst({
       where: { id, org_id: orgId },
     });
@@ -207,27 +257,9 @@ export class FormSubmissionsService {
       throw new NotFoundException('Envío no encontrado');
     }
 
-    // Solo ADMIN puede aprobar o rechazar
-    if (
-      (status === SubmissionStatus.APPROVED ||
-        status === SubmissionStatus.REJECTED) &&
-      userRole !== 'ADMIN' &&
-      userRole !== 'SUPER_ADMIN'
-    ) {
-      throw new ForbiddenException(
-        'Solo los administradores pueden aprobar o rechazar envíos',
-      );
-    }
-
     return this.prisma.formSubmission.update({
       where: { id },
-      data: {
-        status,
-        // Persistir motivo al rechazar (Fix #15)
-        ...(status === SubmissionStatus.REJECTED && reason !== undefined && {
-          review_notes: reason,
-        }),
-      },
+      data: { status },
     });
   }
 

@@ -25,6 +25,17 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { FormBlueprintsModule } from './form-blueprints/form-blueprints.module';
 import { FormAiModule } from './form-ai/form-ai.module';
 import { InventariosModule } from './inventarios/inventarios.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { MailModule } from './mail/mail.module';
+import { MagicLinkModule } from './magic-link/magic-link.module';
+import { AuthOAuthModule } from './auth-oauth/auth-oauth.module';
+import { ElectronicSignatureModule } from './electronic-signature/electronic-signature.module';
+import { FormApprovalModule } from './form-approval/form-approval.module';
+import { SuperadminModule } from './superadmin/superadmin.module';
+import { AdminManagementModule } from './admin-management/admin-management.module';
+import { MasterListsModule } from './master-lists/master-lists.module';
+import { StatusModule } from './status/status.module';
 
 @Module({
   providers: [
@@ -65,6 +76,20 @@ import { InventariosModule } from './inventarios/inventarios.module';
     InventariosModule,
     PushNotificationsModule,
     WebhooksModule,
+
+    // Sprint: feature flags, notificaciones en-app, OAuth admins, magic link,
+    // firma electrónica, aprobación automática, superadmin y listas maestras
+    FeatureFlagsModule,
+    NotificationsModule,
+    MailModule,
+    MagicLinkModule,
+    AuthOAuthModule,
+    ElectronicSignatureModule,
+    FormApprovalModule,
+    SuperadminModule,
+    AdminManagementModule,
+    MasterListsModule,
+    StatusModule,
   ],
 })
 export class AppModule {}

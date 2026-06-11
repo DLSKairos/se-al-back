@@ -1,12 +1,16 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { FormSubmissionsService } from './form-submissions.service';
 import { FormSubmissionsController } from './form-submissions.controller';
 import { FormValidityService } from './form-validity.service';
 import { FormSubmissionsStatsService } from './form-submissions-stats.service';
 import { FormNotificationsModule } from '../form-notifications/form-notifications.module';
+import { FormApprovalModule } from '../form-approval/form-approval.module';
 
 @Module({
-  imports: [FormNotificationsModule],
+  imports: [
+    FormNotificationsModule,
+    forwardRef(() => FormApprovalModule),
+  ],
   controllers: [FormSubmissionsController],
   providers: [FormSubmissionsService, FormValidityService, FormSubmissionsStatsService],
   exports: [FormSubmissionsService],

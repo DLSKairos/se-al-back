@@ -1,5 +1,7 @@
 import { PrismaClient, UserRole, FormTemplateStatus, Frequency, FieldType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { seedMasterLists } from './seed/master-lists';
+import { seedOrgConfigs } from './seed/org-config';
 
 // ─── BLUEPRINTS GLOBALES ──────────────────────────────────────────────────────
 // IDs fijos para garantizar idempotencia en upsert
@@ -324,11 +326,19 @@ async function main(): Promise<void> {
 
   await seedBlueprints();
 
+  // ─── 9. ORGCONFIG POR DEFECTO ─────────────────────────────────────────────
+
+  await seedOrgConfigs(prisma);
+
+  // ─── 10. LISTAS MAESTRAS GLOBALES ─────────────────────────────────────────
+
+  await seedMasterLists(prisma);
+
   console.log('\n─────────────────────────────────────────');
   console.log('Seed completado exitosamente.');
   console.log('─────────────────────────────────────────');
   console.log(`  Organization  : ${org.name}`);
-  console.log(`  Departments   : 2 (SST, Operaciones)`);
+  console.log(`  Departments   : 2 propios + 7 globales`);
   console.log(`  WorkLocations : 2 (Obra Norte, Obra Sur)`);
   console.log(`  Users         : 3 (1 ADMIN, 2 OPERATOR)`);
   console.log(`    PIN "1234"  : Admin Demo, Juan Pérez`);
@@ -336,6 +346,9 @@ async function main(): Promise<void> {
   console.log(`  FormCategories: 1 (SST)`);
   console.log(`  FormTemplates : 1 (Permiso de Trabajo en Alturas, ACTIVE)`);
   console.log(`  Blueprints    : 7 globales (is_global=true)`);
+  console.log(`  OrgConfig     : plan STARTER para cada org`);
+  console.log(`  MasterRoles   : 8 globales`);
+  console.log(`  MasterPositions: 10 globales`);
   console.log('─────────────────────────────────────────\n');
 }
 
