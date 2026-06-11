@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -44,6 +45,17 @@ export class AttendanceService {
     }
 
     try {
+      // Validar que work_location_id pertenezca a la org (Fix #12)
+      if (workLocationId) {
+        const loc = await this.prisma.workLocation.findFirst({
+          where: { id: workLocationId, org_id: orgId },
+          select: { id: true },
+        });
+        if (!loc) {
+          throw new BadRequestException('Ubicación de trabajo inválida o no pertenece a la organización');
+        }
+      }
+
       // Verificar que el módulo de asistencia esté habilitado para la org
       const config = await this.configService.getConfig(orgId);
       if (!config || !config.is_enabled) {
@@ -71,7 +83,7 @@ export class AttendanceService {
 
       const now = new Date();
 
-      return await this.prisma.attendanceRecord.create({
+      const record = await this.prisma.attendanceRecord.create({
         data: {
           org_id: orgId,
           user_id: userId,
@@ -80,8 +92,13 @@ export class AttendanceService {
           entry_time: now,
         },
       });
+
+      // Liberar el lock solo después de confirmar la escritura (Fix #14a)
+      await this.redis.del(lockKey);
+
+      return record;
     } finally {
-      // Liberar el lock siempre, incluso si hubo error
+      // Salvaguarda: liberar si no se liberó en el try (e.g. excepción antes del create)
       await this.redis.del(lockKey);
     }
   }
@@ -94,60 +111,81 @@ export class AttendanceService {
     lunchMinutes?: number,
   ) {
     const today = DateTime.now().setZone(TIMEZONE);
+    const dateStr = today.toISODate()!;
+    const lockKey = `attendance:exit-lock:${userId}:${dateStr}`;
+
+    // Lock distribuido para evitar doble salida concurrente (Fix #14b)
+    const client = this.redis.getClient();
+    const acquired = await client.set(lockKey, '1', 'EX', LOCK_TTL_SECONDS, 'NX');
+
+    if (!acquired) {
+      throw new ConflictException('Salida en proceso — intente nuevamente');
+    }
+
     const serviceDate = today.startOf('day').toJSDate();
 
-    const record = await this.prisma.attendanceRecord.findFirst({
-      where: {
-        user_id: userId,
-        org_id: orgId,
-        service_date: serviceDate,
-        exit_time: null,
-      },
-    });
+    try {
+      const record = await this.prisma.attendanceRecord.findFirst({
+        where: {
+          user_id: userId,
+          org_id: orgId,
+          service_date: serviceDate,
+          exit_time: null,
+        },
+      });
 
-    if (!record) {
-      throw new NotFoundException(
-        'No se encontró una entrada abierta para el día de hoy',
+      if (!record) {
+        throw new NotFoundException(
+          'No se encontró una entrada abierta para el día de hoy',
+        );
+      }
+
+      const config = await this.configService.getConfig(orgId);
+      if (!config) {
+        throw new NotFoundException(
+          'Configuración de asistencia no encontrada para esta organización',
+        );
+      }
+
+      const exitTime = new Date();
+
+      // La constraint de BD requiere lunch_minutes IS NULL OR >= 1.
+      // 0 significa "sin almuerzo", que se guarda como NULL.
+      const lunchForCalc  = lunchMinutes ?? record.lunch_minutes ?? null;
+      const lunchForStore = lunchMinutes != null && lunchMinutes > 0
+        ? lunchMinutes
+        : (record.lunch_minutes ?? null);
+
+      const overtime = this.overtimeService.calculateOvertime(
+        record.entry_time,
+        exitTime,
+        record.service_date,
+        lunchForCalc,
+        config,
       );
+
+      const updated = await this.prisma.attendanceRecord.update({
+        where: { id: record.id },
+        data: {
+          exit_time: exitTime,
+          lunch_minutes: lunchForStore,
+          total_minutes: overtime.totalMinutes,
+          regular_minutes: overtime.regularMinutes,
+          extra_day_minutes: overtime.extraDayMinutes,
+          extra_night_minutes: overtime.extraNightMinutes,
+          extra_sunday_minutes: overtime.extraSundayMinutes,
+          extra_holiday_minutes: overtime.extraHolidayMinutes,
+        },
+      });
+
+      // Liberar lock después de confirmar la escritura (Fix #14b)
+      await this.redis.del(lockKey);
+
+      return updated;
+    } finally {
+      // Salvaguarda
+      await this.redis.del(lockKey);
     }
-
-    const config = await this.configService.getConfig(orgId);
-    if (!config) {
-      throw new NotFoundException(
-        'Configuración de asistencia no encontrada para esta organización',
-      );
-    }
-
-    const exitTime = new Date();
-
-    // La constraint de BD requiere lunch_minutes IS NULL OR >= 1.
-    // 0 significa "sin almuerzo", que se guarda como NULL.
-    const lunchForCalc  = lunchMinutes ?? record.lunch_minutes ?? null;
-    const lunchForStore = lunchMinutes != null && lunchMinutes > 0
-      ? lunchMinutes
-      : (record.lunch_minutes ?? null);
-
-    const overtime = this.overtimeService.calculateOvertime(
-      record.entry_time,
-      exitTime,
-      record.service_date,
-      lunchForCalc,
-      config,
-    );
-
-    return this.prisma.attendanceRecord.update({
-      where: { id: record.id },
-      data: {
-        exit_time: exitTime,
-        lunch_minutes: lunchForStore,
-        total_minutes: overtime.totalMinutes,
-        regular_minutes: overtime.regularMinutes,
-        extra_day_minutes: overtime.extraDayMinutes,
-        extra_night_minutes: overtime.extraNightMinutes,
-        extra_sunday_minutes: overtime.extraSundayMinutes,
-        extra_holiday_minutes: overtime.extraHolidayMinutes,
-      },
-    });
   }
 
   // ─── Consultas ─────────────────────────────────────────────────────────────

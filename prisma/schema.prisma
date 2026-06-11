@@ -267,6 +267,7 @@ model FormSubmission {
   data             Json
   geo_lat          Float?
   geo_lng          Float?
+  review_notes     String?
 
   template      FormTemplate          @relation(fields: [template_id], references: [id])
   org           Organization          @relation(fields: [org_id], references: [id])

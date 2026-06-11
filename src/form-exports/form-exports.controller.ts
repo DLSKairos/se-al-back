@@ -70,6 +70,7 @@ export class FormExportsController {
 
   /**
    * Exporta una submission individual a PDF.
+   * OPERATOR solo puede exportar sus propias submissions (Fix #8).
    */
   @Get(':submissionId/pdf')
   async exportPdf(
@@ -80,6 +81,8 @@ export class FormExportsController {
     const buffer = await this.formExportsService.exportPdf(
       submissionId,
       user.orgId,
+      user.sub,
+      user.role,
     );
     const filename = `formulario-${submissionId}.pdf`;
 
@@ -91,6 +94,7 @@ export class FormExportsController {
 
   /**
    * Exporta una submission individual a Excel.
+   * OPERATOR solo puede exportar sus propias submissions (Fix #8).
    */
   @Get(':submissionId/excel')
   async exportExcel(
@@ -101,6 +105,8 @@ export class FormExportsController {
     const buffer = await this.formExportsService.exportExcel(
       submissionId,
       user.orgId,
+      user.sub,
+      user.role,
     );
     const filename = `formulario-${submissionId}.xlsx`;
 

@@ -14,12 +14,12 @@ import { FormSubmissionsService } from './form-submissions.service';
 import { FormSubmissionsStatsService } from './form-submissions-stats.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
 import { SubmissionQueryDto } from './dto/submission-query.dto';
+import { ChangeStatusDto } from './dto/change-status.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/dto/jwt-payload.dto';
-import { SubmissionStatus } from '@prisma/client';
 
 @Controller('form-submissions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -94,14 +94,15 @@ export class FormSubmissionsController {
 
   /**
    * Cambia el estado de una submission (APPROVED / REJECTED) — solo ADMIN.
+   * Acepta body { status, reason? } (Fix #15).
    */
   @Roles('ADMIN')
   @Patch(':id/status')
   changeStatus(
     @Param('id') id: string,
-    @Body('status') status: SubmissionStatus,
+    @Body() dto: ChangeStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.formSubmissionsService.changeStatus(id, user.orgId, status, user.sub, user.role);
+    return this.formSubmissionsService.changeStatus(id, user.orgId, dto.status, user.sub, user.role, dto.reason);
   }
 }

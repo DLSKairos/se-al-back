@@ -14,6 +14,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -139,10 +140,18 @@ export class InventariosController {
     @Query('tipo') tipo: string,
     @Query('itemId') itemId?: string,
   ) {
+    if (!file) {
+      throw new BadRequestException('Archivo no recibido o formato no soportado');
+    }
+    const ALLOWED_TIPOS = ['inicio_carga', 'fin_carga', 'item', 'general'];
+    const tipoFinal = tipo ?? 'general';
+    if (!ALLOWED_TIPOS.includes(tipoFinal)) {
+      throw new BadRequestException(`Tipo de foto inválido: ${tipoFinal}`);
+    }
     return this.inventariosService.subirFoto(
       user.orgId,
       id,
-      tipo ?? 'general',
+      tipoFinal,
       file,
       itemId,
     );
@@ -166,16 +175,25 @@ export class InventariosController {
     FileInterceptor('imagen', {
       storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+        if (allowed.includes(file.mimetype)) cb(null, true);
+        else cb(new BadRequestException('Solo se aceptan imágenes JPEG, PNG, WebP o PDF'), false);
+      },
     }),
   )
   extraerFactura(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('Archivo no recibido o formato no soportado');
+    }
     return this.inventariosIaService.extraerDatosFactura(file);
   }
 
   // ─── Firma y PDF ───────────────────────────────────────────────────────────
 
+  // Frontend usa PATCH /inventarios/sesiones/:id/firmar (Fix #26)
   @Roles('ADMIN', 'OPERATOR')
-  @Post('sesiones/:id/firmar')
+  @Patch('sesiones/:id/firmar')
   firmarSesion(
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
@@ -188,15 +206,5 @@ export class InventariosController {
     return this.inventariosService.firmarSesion(user.orgId, id, dto);
   }
 
-  @Roles('ADMIN', 'OPERATOR')
-  @Post('sesiones/:id/generar-pdf')
-  @HttpCode(HttpStatus.ACCEPTED)
-  generarPdf(
-    @Param('id') id: string,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    void user;
-    void id;
-    return { message: 'La generación de PDF estará disponible próximamente.' };
-  }
+  // POST sesiones/:id/generar-pdf eliminado (Fix #25): nadie lo llama y devolvía 202 hardcoded.
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSignatureDto } from './dto/create-signature.dto';
 
@@ -6,15 +6,26 @@ import { CreateSignatureDto } from './dto/create-signature.dto';
 export class FormSignaturesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(submissionId: string, orgId: string, dto: CreateSignatureDto) {
+  async create(
+    submissionId: string,
+    orgId: string,
+    dto: CreateSignatureDto,
+    userId: string,
+    userRole: string,
+  ) {
     // Verify the submission exists and belongs to the org
     const submission = await this.prisma.formSubmission.findFirst({
       where: { id: submissionId, org_id: orgId },
-      select: { id: true },
+      select: { id: true, submitted_by: true },
     });
 
     if (!submission) {
       throw new NotFoundException('Envío no encontrado');
+    }
+
+    // OPERATOR solo puede firmar sus propias submissions (Fix #7)
+    if (userRole === 'OPERATOR' && submission.submitted_by !== userId) {
+      throw new ForbiddenException('No tienes permiso para firmar este envío');
     }
 
     return this.prisma.formSignature.create({

@@ -5,7 +5,9 @@ import { PinService } from './pin/pin.service';
 import { WebAuthnService } from './webauthn/webauthn.service';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtPayload } from './dto/jwt-payload.dto';
 import { PinStatusDto } from './dto/pin-status.dto';
 import { PinSetDto } from './dto/pin-set.dto';
@@ -19,37 +21,44 @@ export class AuthController {
     private readonly webAuthnService: WebAuthnService,
   ) {}
 
+  private extractIp(req: Request): string {
+    return req.ip ?? '0.0.0.0';
+  }
+
   // ─── PIN ───────────────────────────────────────────────────
 
   /**
    * Consulta si un usuario tiene PIN configurado.
    * Público: se usa antes del login para saber si mostrar el teclado PIN.
+   * Rate-limited por IP (Fix #4).
    */
   @Public()
   @Post('pin/status')
-  pinStatus(@Body() dto: PinStatusDto) {
-    return this.pinService.getStatus(dto.identification_number);
+  pinStatus(@Body() dto: PinStatusDto, @Req() req: Request) {
+    return this.pinService.getStatus(dto.identification_number, this.extractIp(req));
   }
 
   /**
-   * Configura o actualiza el PIN de cualquier usuario identificado por
-   * identification_number. Requiere JWT (el ADMIN o el propio usuario).
+   * Configura o actualiza el PIN de un usuario.
+   * Solo ADMIN puede usar este endpoint (Fix #1 — escalada de privilegios).
+   * El frontend usa /users/:id/pin/set; este endpoint es respaldo para ADMIN.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
   @Post('pin/set')
-  pinSet(@Body() dto: PinSetDto) {
-    return this.pinService.setPin(dto.identification_number, dto.pin);
+  pinSet(@Body() dto: PinSetDto, @CurrentUser() user: JwtPayload) {
+    return this.pinService.setPin(dto.identification_number, dto.pin, user.orgId);
   }
 
   /**
    * Crea el PIN inicial de un usuario sin PIN previo y devuelve access_token.
    * Solo funciona si el usuario nunca tuvo PIN (pin_hash === null).
-   * Fallback cuando WebAuthn no está disponible en el dispositivo.
+   * Rate-limited por IP (Fix #4).
    */
   @Public()
   @Post('pin/init')
-  pinInit(@Body() dto: PinVerifyDto) {
-    return this.authService.initPinAndLogin(dto.identification_number, dto.pin);
+  pinInit(@Body() dto: PinVerifyDto, @Req() req: Request) {
+    return this.authService.initPinAndLogin(dto.identification_number, dto.pin, this.extractIp(req));
   }
 
   /**
@@ -59,10 +68,8 @@ export class AuthController {
   @Public()
   @Post('pin/verify')
   pinVerify(@Body() dto: PinVerifyDto, @Req() req: Request) {
-    const ip =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ??
-      req.socket.remoteAddress ??
-      '0.0.0.0';
+    // req.ip es seguro porque trust proxy está configurado en main.ts (Fix #5)
+    const ip = req.ip ?? '0.0.0.0';
     return this.authService.loginWithPin(
       dto.identification_number,
       dto.pin,

@@ -26,6 +26,7 @@ export class FormSignaturesController {
 
   /**
    * Agrega una firma a la submission indicada.
+   * OPERATOR solo puede firmar sus propias submissions (Fix #7).
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -34,7 +35,7 @@ export class FormSignaturesController {
     @Body() dto: CreateSignatureDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.formSignaturesService.create(submissionId, user.orgId, dto);
+    return this.formSignaturesService.create(submissionId, user.orgId, dto, user.sub, user.role);
   }
 
   /**

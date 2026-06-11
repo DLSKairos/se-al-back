@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Patch,
@@ -9,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
+import { PinService } from '../auth/pin/pin.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -16,11 +18,22 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { JwtPayload } from '../auth/dto/jwt-payload.dto';
+import { IsNotEmpty, IsString, Matches } from 'class-validator';
+
+class SetPinDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\d{4,8}$/, { message: 'El PIN debe ser numérico de 4 a 8 dígitos' })
+  pin: string;
+}
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly pinService: PinService,
+  ) {}
 
   /**
    * Lista todos los usuarios activos de la organización.
@@ -42,10 +55,43 @@ export class UsersController {
 
   /**
    * Obtiene un usuario por ID (mismo org).
+   * OPERATOR solo puede ver su propia información (Fix #2).
    */
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    if (user.role === 'OPERATOR' && id !== user.sub) {
+      throw new ForbiddenException('No tienes permiso para ver este usuario');
+    }
     return this.usersService.findOne(id, user.orgId);
+  }
+
+  /**
+   * Establece el PIN de un usuario. Solo ADMIN (Fix #1).
+   * El frontend llama a POST /users/:id/pin/set.
+   */
+  @Roles('ADMIN')
+  @Post(':id/pin/set')
+  async setPinForUser(
+    @Param('id') id: string,
+    @Body() dto: SetPinDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    // Obtener el identification_number del usuario a partir de su id
+    const target = await this.usersService.findOne(id, user.orgId);
+    return this.pinService.setPin(target.identification_number, dto.pin, user.orgId);
+  }
+
+  /**
+   * Elimina el PIN de un usuario. Solo ADMIN.
+   * El frontend llama a DELETE /users/:id/pin.
+   */
+  @Roles('ADMIN')
+  @Delete(':id/pin')
+  async deletePinForUser(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.usersService.setPinEnabled(id, user.orgId, false);
   }
 
   /**

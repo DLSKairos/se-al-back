@@ -1,61 +1,47 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { RedisService } from '../../redis/redis.service';
 
 const MAX_ATTEMPTS = 10;
-const WINDOW_MS = 15 * 60 * 1000; // 15 minutos en milisegundos
-
-interface AttemptRecord {
-  count: number;
-  windowStart: number;
-}
+const WINDOW_SECONDS = 15 * 60; // 15 minutos
 
 /**
  * Rate limiter para intentos de verificación de PIN.
  * Límite: 10 intentos por IP cada 15 minutos.
- * Usa Map en memoria — adecuado para instancia única.
+ * Usa Redis para persistencia multi-instancia (Fix #4).
  */
 @Injectable()
 export class PinRateLimiterService {
   private readonly logger = new Logger(PinRateLimiterService.name);
-  private readonly attempts = new Map<string, AttemptRecord>();
+
+  constructor(private readonly redis: RedisService) {}
 
   /**
    * Verifica si la IP puede realizar un intento de PIN.
-   * Retorna false si superó el límite y loggea el evento.
+   * Retorna false si superó el límite.
    */
-  checkLimit(ip: string): boolean {
-    const now = Date.now();
-    const record = this.attempts.get(ip);
+  async checkLimit(ip: string): Promise<boolean> {
+    const key = `pin:attempts:${ip}`;
+    const count = await this.redis.incr(key);
 
-    if (!record) {
-      this.attempts.set(ip, { count: 1, windowStart: now });
-      return true;
+    // Solo aplica TTL en el primer intento de la ventana
+    if (count === 1) {
+      await this.redis.expire(key, WINDOW_SECONDS);
     }
 
-    // Si la ventana expiró, reiniciar el contador
-    if (now - record.windowStart > WINDOW_MS) {
-      this.attempts.set(ip, { count: 1, windowStart: now });
-      return true;
-    }
-
-    // Dentro de la ventana activa
-    if (record.count >= MAX_ATTEMPTS) {
-      const remainingMs = WINDOW_MS - (now - record.windowStart);
-      const remainingMin = Math.ceil(remainingMs / 60_000);
+    if (count > MAX_ATTEMPTS) {
       this.logger.warn(
-        `[PIN Rate Limit] IP ${ip} bloqueada — ${record.count} intentos en ventana activa. ` +
-          `Tiempo restante: ~${remainingMin} min`,
+        `[PIN Rate Limit] IP ${ip} bloqueada — ${count} intentos en ventana activa`,
       );
       return false;
     }
 
-    record.count += 1;
     return true;
   }
 
   /**
    * Reinicia el contador de la IP al autenticar exitosamente.
    */
-  resetLimit(ip: string): void {
-    this.attempts.delete(ip);
+  async resetLimit(ip: string): Promise<void> {
+    await this.redis.del(`pin:attempts:${ip}`);
   }
 }

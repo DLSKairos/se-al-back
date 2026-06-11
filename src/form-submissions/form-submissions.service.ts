@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -35,6 +36,17 @@ export class FormSubmissionsService {
     geoLat?: number,
     geoLng?: number,
   ) {
+    // Validar que work_location_id pertenezca a la org (Fix #12)
+    if (workLocationId) {
+      const loc = await this.prisma.workLocation.findFirst({
+        where: { id: workLocationId, org_id: orgId },
+        select: { id: true },
+      });
+      if (!loc) {
+        throw new BadRequestException('Ubicación de trabajo inválida o no pertenece a la organización');
+      }
+    }
+
     // Validar template activo y perteneciente a la org
     const template = await this.prisma.formTemplate.findFirst({
       where: {
@@ -185,6 +197,7 @@ export class FormSubmissionsService {
     status: SubmissionStatus,
     userId: string,
     userRole: string,
+    reason?: string,
   ) {
     const submission = await this.prisma.formSubmission.findFirst({
       where: { id, org_id: orgId },
@@ -208,7 +221,13 @@ export class FormSubmissionsService {
 
     return this.prisma.formSubmission.update({
       where: { id },
-      data: { status },
+      data: {
+        status,
+        // Persistir motivo al rechazar (Fix #15)
+        ...(status === SubmissionStatus.REJECTED && reason !== undefined && {
+          review_notes: reason,
+        }),
+      },
     });
   }
 
@@ -249,13 +268,14 @@ export class FormSubmissionsService {
     }
 
     if (typeof rawValue === 'string') {
-      // Intentar parsear como fecha ISO
-      const dateAttempt = new Date(rawValue);
-      if (
-        rawValue.match(/^\d{4}-\d{2}-\d{2}/) &&
-        !isNaN(dateAttempt.getTime())
-      ) {
-        return { ...base, value_date: dateAttempt };
+      // Intentar parsear como fecha ISO (Fix #17: verificar isNaN antes de guardar)
+      if (rawValue.match(/^\d{4}-\d{2}-\d{2}/)) {
+        const dateAttempt = new Date(rawValue);
+        if (!isNaN(dateAttempt.getTime())) {
+          return { ...base, value_date: dateAttempt };
+        }
+        // Fecha inválida: guardar como texto
+        return { ...base, value_text: rawValue };
       }
       return { ...base, value_text: rawValue };
     }

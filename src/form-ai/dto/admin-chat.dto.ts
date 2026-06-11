@@ -1,4 +1,4 @@
-import { IsArray, IsString, IsNotEmpty, ValidateNested, IsIn } from 'class-validator';
+import { IsArray, IsString, IsNotEmpty, ValidateNested, IsIn, ArrayMaxSize } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ChatMessageDto {
@@ -15,6 +15,7 @@ export class AdminChatDto {
   message: string;
 
   @IsArray()
+  @ArrayMaxSize(20)
   @ValidateNested({ each: true })
   @Type(() => ChatMessageDto)
   history: ChatMessageDto[];

@@ -1,10 +1,11 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   HttpCode,
   HttpStatus,
+  Logger,
   Post,
-  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -18,6 +19,8 @@ import { AdminChatDto } from './dto/admin-chat.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { JwtPayload } from '../auth/dto/jwt-payload.dto';
 
 const ALLOWED_MIMETYPES = [
   'application/pdf',
@@ -26,10 +29,13 @@ const ALLOWED_MIMETYPES = [
   'application/vnd.ms-excel',
 ];
 
+
 @Controller('form-ai')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
 export class FormAiController {
+  private readonly logger = new Logger(FormAiController.name);
+
   constructor(private readonly formAiService: FormAiService) {}
 
   @Post('extract-from-file')
@@ -39,7 +45,8 @@ export class FormAiController {
       storage: memoryStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (_, file, cb) => {
-        cb(null, ALLOWED_MIMETYPES.includes(file.mimetype));
+        if (ALLOWED_MIMETYPES.includes(file.mimetype)) cb(null, true);
+        else cb(new BadRequestException('Formato de archivo no soportado'), false);
       },
     }),
   )
@@ -53,7 +60,8 @@ export class FormAiController {
         errorMessage: 'Archivo no recibido o formato no soportado.',
       };
     }
-    console.log(`[FormAI] extract-from-file recibido: ${file.originalname} (${file.mimetype}, ${file.size} bytes)`);
+    // Loguear mimetype y tamaño, nunca originalname (Fix #20)
+    this.logger.log(`extract-from-file recibido: mimetype=${file.mimetype}, size=${file.size}`);
     return this.formAiService.extractFromFile(file);
   }
 
@@ -71,7 +79,7 @@ export class FormAiController {
 
   @Post('admin-chat')
   @HttpCode(HttpStatus.OK)
-  adminChat(@Body() dto: AdminChatDto, @Req() req: any) {
-    return this.formAiService.adminChat(req.user.orgId, dto.message, dto.history);
+  adminChat(@Body() dto: AdminChatDto, @CurrentUser() user: JwtPayload) {
+    return this.formAiService.adminChat(user.orgId, dto.message, dto.history);
   }
 }

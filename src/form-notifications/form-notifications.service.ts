@@ -32,10 +32,12 @@ export class FormNotificationsService {
     private readonly pushNotifications: PushNotificationsService,
     private readonly config: ConfigService,
   ) {
+    const smtpPort = this.config.get<number>('SMTP_PORT', 587);
     this.mailer = nodemailer.createTransport({
       host: this.config.get<string>('SMTP_HOST', 'localhost'),
-      port: this.config.get<number>('SMTP_PORT', 587),
-      secure: this.config.get<boolean>('SMTP_SECURE', false),
+      port: smtpPort,
+      // Puerto 465 implica TLS directo; otros puertos usan STARTTLS (Fix #22)
+      secure: smtpPort === 465,
       auth: {
         user: this.config.get<string>('SMTP_USER'),
         pass: this.config.get<string>('SMTP_PASS'),

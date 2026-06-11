@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PushNotificationsService, PushPayload } from './push-notifications.service';
+import { PushSubscriptionDto } from './dto/push-subscription.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -42,7 +43,7 @@ export class PushNotificationsController {
   @Post('subscribe')
   @HttpCode(HttpStatus.NO_CONTENT)
   async subscribe(
-    @Body() subscription: Record<string, unknown>,
+    @Body() subscription: PushSubscriptionDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
     await this.pushService.subscribe(user.sub, subscription as any);

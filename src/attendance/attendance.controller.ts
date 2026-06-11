@@ -8,6 +8,13 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { IsDateString, IsOptional } from 'class-validator';
+
+class CloseDayDto {
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+}
 import { Response } from 'express';
 import { AttendanceService } from './attendance.service';
 import { AttendanceConfigService } from './attendance-config.service';
@@ -126,49 +133,16 @@ export class AttendanceController {
   @Roles('ADMIN')
   @Post('close-day')
   closeDay(
-    @Body('date') date: string | undefined,
+    @Body() dto: CloseDayDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.attendanceService.closeDay(user.orgId, date);
+    return this.attendanceService.closeDay(user.orgId, dto.date);
   }
 
   // ─── Reportes ─────────────────────────────────────────────
 
-  /**
-   * Reporte diario de asistencia.
-   */
-  @Roles('ADMIN')
-  @Get('report/daily')
-  reportDaily(
-    @Query() query: AttendanceReportQueryDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.attendanceService.findAll(user.orgId, query);
-  }
-
-  /**
-   * Reporte semanal de asistencia.
-   */
-  @Roles('ADMIN')
-  @Get('report/weekly')
-  reportWeekly(
-    @Query() query: AttendanceReportQueryDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.attendanceService.findAll(user.orgId, query);
-  }
-
-  /**
-   * Reporte mensual de asistencia.
-   */
-  @Roles('ADMIN')
-  @Get('report/monthly')
-  reportMonthly(
-    @Query() query: AttendanceReportQueryDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.attendanceService.findAll(user.orgId, query);
-  }
+  // GET report/daily, report/weekly, report/monthly eliminados (Fix #25):
+  // ningún cliente los usa. Usar GET attendance con query params for/to.
 
   /**
    * Exporta el reporte de asistencia a Excel (.xlsx) con desglose de horas extras.

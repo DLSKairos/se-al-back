@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as ExcelJS from 'exceljs';
 // pdfmake es un módulo CommonJS — importamos con require
@@ -20,8 +20,8 @@ export class FormExportsService {
 
   // ─── PDF individual ────────────────────────────────────────────────────────
 
-  async exportPdf(submissionId: string, orgId: string): Promise<Buffer> {
-    const submission = await this.loadSubmission(submissionId, orgId);
+  async exportPdf(submissionId: string, orgId: string, userId: string, userRole: string): Promise<Buffer> {
+    const submission = await this.loadSubmission(submissionId, orgId, userId, userRole);
     const template = submission.template;
     const fields = template.fields;
 
@@ -98,8 +98,8 @@ export class FormExportsService {
 
   // ─── Excel individual ──────────────────────────────────────────────────────
 
-  async exportExcel(submissionId: string, orgId: string): Promise<Buffer> {
-    const submission = await this.loadSubmission(submissionId, orgId);
+  async exportExcel(submissionId: string, orgId: string, userId: string, userRole: string): Promise<Buffer> {
+    const submission = await this.loadSubmission(submissionId, orgId, userId, userRole);
     const template = submission.template;
     const fields = template.fields;
     const data = submission.data as Record<string, unknown>;
@@ -233,7 +233,7 @@ export class FormExportsService {
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
-  private async loadSubmission(submissionId: string, orgId: string) {
+  private async loadSubmission(submissionId: string, orgId: string, userId: string, userRole: string) {
     const submission = await this.prisma.formSubmission.findFirst({
       where: { id: submissionId, org_id: orgId },
       include: {
@@ -244,6 +244,11 @@ export class FormExportsService {
 
     if (!submission) {
       throw new NotFoundException('Envío no encontrado');
+    }
+
+    // OPERATOR solo puede exportar sus propias submissions (Fix #8)
+    if (userRole === 'OPERATOR' && submission.submitted_by !== userId) {
+      throw new ForbiddenException('No tienes permiso para exportar este envío');
     }
 
     return submission;

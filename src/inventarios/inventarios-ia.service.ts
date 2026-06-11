@@ -1,5 +1,7 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
+import { validateMagicBytes } from '../common/utils/magic-bytes.util';
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 type AllowedImageType = typeof ALLOWED_IMAGE_TYPES[number];
@@ -40,9 +42,14 @@ Si un campo no es visible o no existe en el documento, usa null. No inventes inf
 
 @Injectable()
 export class InventariosIaService {
-  private readonly anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
+  private readonly logger = new Logger(InventariosIaService.name);
+  private readonly anthropic: Anthropic;
+
+  constructor(private readonly config: ConfigService) {
+    this.anthropic = new Anthropic({
+      apiKey: this.config.getOrThrow<string>('ANTHROPIC_API_KEY'),
+    });
+  }
 
   async extraerDatosFactura(file: Express.Multer.File) {
     const isPdf = file.mimetype === 'application/pdf';
@@ -51,6 +58,9 @@ export class InventariosIaService {
     if (!isPdf && !isImage) {
       throw new BadRequestException('Solo se aceptan imágenes (JPEG, PNG, WebP) o PDF');
     }
+
+    // Validar magic bytes contra content-type spoofing (Fix #9)
+    validateMagicBytes(file.buffer, file.mimetype);
 
     const base64 = file.buffer.toString('base64');
 
@@ -109,8 +119,11 @@ export class InventariosIaService {
       const jsonStr = texto.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
       return JSON.parse(jsonStr);
     } catch (err) {
-      console.error('[InventariosIA] Error en extracción:', err);
-      return null;
+      if (err instanceof BadRequestException) {
+        throw err;
+      }
+      this.logger.error('[InventariosIA] Error en extracción de factura');
+      throw new InternalServerErrorException('No se pudo procesar el archivo. Intente nuevamente.');
     }
   }
 }

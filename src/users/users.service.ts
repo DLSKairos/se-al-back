@@ -18,7 +18,21 @@ export class UsersService {
   async findAll(orgId: string) {
     return this.prisma.user.findMany({
       where: { org_id: orgId, is_active: true },
-      include: { work_location: true },
+      select: {
+        id: true,
+        org_id: true,
+        name: true,
+        identification_number: true,
+        job_title: true,
+        role: true,
+        is_active: true,
+        pin_enabled: true,
+        work_location_id: true,
+        created_at: true,
+        work_location: true,
+        // pin_hash excluido intencionalmente (Fix #2)
+        // push_subscription excluido: contiene datos del dispositivo (Fix #2)
+      },
       orderBy: { name: 'asc' },
     });
   }
@@ -26,7 +40,17 @@ export class UsersService {
   async findOne(id: string, orgId: string) {
     const user = await this.prisma.user.findFirst({
       where: { id, org_id: orgId },
-      include: {
+      select: {
+        id: true,
+        org_id: true,
+        name: true,
+        identification_number: true,
+        job_title: true,
+        role: true,
+        is_active: true,
+        pin_enabled: true,
+        work_location_id: true,
+        created_at: true,
         work_location: true,
         webauthn_credentials: {
           select: {
@@ -36,7 +60,7 @@ export class UsersService {
             registered_at: true,
           },
         },
-        push_subscription: true,
+        // pin_hash y push_subscription excluidos intencionalmente (Fix #2)
       },
     });
 

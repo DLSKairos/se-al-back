@@ -20,8 +20,9 @@ export class AuthService {
   async initPinAndLogin(
     identificationNumber: string,
     pin: string,
+    ip: string,
   ): Promise<{ access_token: string; user: UserPublic }> {
-    const user = await this.pinService.initPin(identificationNumber, pin);
+    const user = await this.pinService.initPin(identificationNumber, pin, ip);
     const access_token = await this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };
   }

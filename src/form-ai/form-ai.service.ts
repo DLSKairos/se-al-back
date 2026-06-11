@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { validateMagicBytes } from '../common/utils/magic-bytes.util';
 import Anthropic from '@anthropic-ai/sdk';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse');
@@ -19,18 +21,25 @@ import { AiAssistDto } from './dto/ai-assist.dto';
 
 @Injectable()
 export class FormAiService {
-  private readonly anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
+  private readonly logger = new Logger(FormAiService.name);
+  private readonly anthropic: Anthropic;
 
   constructor(
     private readonly fileStorage: FileStorageService,
     private readonly prisma: PrismaService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.anthropic = new Anthropic({
+      apiKey: this.config.getOrThrow<string>('ANTHROPIC_API_KEY'),
+    });
+  }
 
   // ─── Extracción desde archivo ──────────────────────────────────────────────
 
   async extractFromFile(file: Express.Multer.File) {
+    // Validar magic bytes (Fix #9)
+    validateMagicBytes(file.buffer, file.mimetype);
+
     let sourceFileUrl = '';
 
     try {
@@ -46,11 +55,11 @@ export class FormAiService {
     try {
       const text = await this.extractText(file);
       if (!text.trim()) throw new Error('Documento vacío');
-      console.log(`[FormAI] Texto extraído: ${text.length} chars`);
+      this.logger.debug(`Texto extraído: ${text.length} chars`);
 
       const userPrompt = EXTRACT_USER_PROMPT.replace('{TEXTO_DEL_DOCUMENTO}', text.slice(0, 15000));
 
-      console.log('[FormAI] Llamando a Claude...');
+      this.logger.debug('Llamando a Claude para extracción...');
       const response = await this.anthropic.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 8096,
@@ -74,7 +83,7 @@ export class FormAiService {
         aiError: false,
       };
     } catch (err) {
-      console.error('[FormAI] Error en extractFromFile:', err);
+      this.logger.error(`Error en extractFromFile: ${(err as Error).message}`);
       return {
         fields: [],
         source_filename: file.originalname,
@@ -263,7 +272,7 @@ Responde únicamente con base en estos datos. Si el administrador pregunta algo 
 
       return { response: (response.content[0] as { text: string }).text };
     } catch (err) {
-      console.error('[AdminChat] Error:', err);
+      this.logger.error(`Error en adminChat: ${(err as Error).message}`);
       return {
         response:
           'Lo siento, ocurrió un error al procesar tu pregunta. Por favor intenta de nuevo.',

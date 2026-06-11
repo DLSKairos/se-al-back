@@ -1,8 +1,38 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
+
+/**
+ * Rechaza hostnames privados o de loopback para prevenir SSRF (Fix #13).
+ */
+function rejectPrivateHostname(url: string): void {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    throw new BadRequestException('URL inválida');
+  }
+
+  const privatePatterns = [
+    /^localhost$/,
+    /^127\./,
+    /^10\./,
+    /^192\.168\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^169\.254\./,
+    /^::1$/,
+    /^0\.0\.0\.0$/,
+    /^fc[0-9a-f]{2}:/i, // IPv6 unique local
+  ];
+
+  if (privatePatterns.some((p) => p.test(hostname))) {
+    throw new BadRequestException(
+      'No se permiten URLs con direcciones de red privada',
+    );
+  }
+}
 
 @Injectable()
 export class WebhooksService {
@@ -20,6 +50,9 @@ export class WebhooksService {
   }
 
   async create(orgId: string, dto: CreateWebhookDto) {
+    // Validar que no sea un hostname privado (Fix #13)
+    rejectPrivateHostname(dto.url);
+
     // Generar secret HMAC aleatorio — no usar el que venga del DTO por seguridad
     const secret = crypto.randomBytes(32).toString('hex');
 
@@ -35,6 +68,11 @@ export class WebhooksService {
   }
 
   async update(id: string, orgId: string, dto: UpdateWebhookDto) {
+    // Validar hostname privado si se actualiza la URL (Fix #13)
+    if (dto.url) {
+      rejectPrivateHostname(dto.url);
+    }
+
     await this.assertExists(id, orgId);
 
     return this.prisma.webhookEndpoint.update({

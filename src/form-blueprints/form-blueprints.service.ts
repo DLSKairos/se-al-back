@@ -44,19 +44,20 @@ export class FormBlueprintsService {
     });
     if (!blueprint) throw new NotFoundException('Blueprint no encontrado');
 
-    let category = await this.prisma.formCategory.findFirst({
-      where: { org_id: orgId, name: blueprint.category },
-    });
-    if (!category) {
-      category = await this.prisma.formCategory.create({
-        data: { org_id: orgId, name: blueprint.category, is_sst: true },
-      });
-    }
-
     const rawFields = Array.isArray(blueprint.fields) ? (blueprint.fields as any[]) : [];
     const uniqueFields = ensureUniqueKeys(rawFields);
 
     return this.prisma.$transaction(async (tx) => {
+      // Creación/búsqueda de categoría dentro de la transacción (Fix #19)
+      let category = await tx.formCategory.findFirst({
+        where: { org_id: orgId, name: blueprint.category },
+      });
+      if (!category) {
+        category = await tx.formCategory.create({
+          data: { org_id: orgId, name: blueprint.category, is_sst: true },
+        });
+      }
+
       const template = await tx.formTemplate.create({
         data: {
           org_id: orgId,
