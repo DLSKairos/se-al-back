@@ -26,6 +26,26 @@ export class SuperadminService {
     private readonly magicLink: MagicLinkService,
   ) {}
 
+  // ─── Administradores de una organización ──────────────────────────────────
+
+  async findAdministrators(orgId: string) {
+    const org = await this.prisma.organization.findUnique({ where: { id: orgId } });
+    if (!org) throw new NotFoundException('Organización no encontrada');
+
+    return this.prisma.user.findMany({
+      where: { org_id: orgId, role: 'ADMIN' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        is_active: true,
+        oauth_provider: true,
+        created_at: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   // ─── Lista de organizaciones ──────────────────────────────────────────────
 
   async findAllOrganizations() {

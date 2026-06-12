@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -14,36 +15,22 @@ import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../auth/dto/jwt-payload.dto';
 import { MagicLinkService } from './magic-link.service';
-import { GenerateFirstAdminLinkDto } from './dto/generate-first-admin-link.dto';
 import { GenerateInviteLinkDto } from './dto/generate-invite-link.dto';
 
 // ─── Rutas protegidas ─────────────────────────────────────────────────────────
+//
+// NOTA: la generación del magic link de primer acceso vive en
+// POST /superadmin/organizations/:id/first-admin-link (SuperadminController),
+// que además valida que el usuario pertenece a la organización. La ruta
+// duplicada POST /superadmin/magic-link/first-admin fue eliminada.
+//
+// Las respuestas se devuelven SIN envolver: el ResponseTransformInterceptor
+// global agrega { success, data } — envolver aquí produciría doble envoltura.
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
 export class MagicLinkController {
   constructor(private readonly magicLinkService: MagicLinkService) {}
-
-  /**
-   * SUPER_ADMIN genera el magic link de primer acceso para un admin cliente.
-   * POST /superadmin/magic-link/first-admin
-   */
-  @Post('superadmin/magic-link/first-admin')
-  @Roles('SUPER_ADMIN')
-  async generateFirstAdmin(
-    @Body() dto: GenerateFirstAdminLinkDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    const result = await this.magicLinkService.generateFirstAdminLink(
-      dto.userId,
-      user.sub,
-    );
-    return {
-      success: true,
-      data: { tokenId: result.tokenId, link: result.link },
-      message: 'Magic link generado y enviado por email.',
-    };
-  }
 
   /**
    * ADMIN o SUPER_ADMIN invita a un nuevo administrador de su organización.
@@ -59,11 +46,7 @@ export class MagicLinkController {
       dto.userId,
       user.sub,
     );
-    return {
-      success: true,
-      data: { tokenId: result.tokenId, link: result.link },
-      message: 'Invitación generada y enviada por email.',
-    };
+    return { tokenId: result.tokenId, link: result.link };
   }
 
   /**
@@ -77,11 +60,7 @@ export class MagicLinkController {
     @CurrentUser() user: JwtPayload,
   ) {
     const result = await this.magicLinkService.resendLink(tokenId, user.sub);
-    return {
-      success: true,
-      data: { tokenId: result.tokenId, link: result.link },
-      message: 'Nuevo magic link enviado.',
-    };
+    return { tokenId: result.tokenId, link: result.link };
   }
 
   /**
@@ -90,9 +69,8 @@ export class MagicLinkController {
    */
   @Get('superadmin/magic-link/history')
   @Roles('SUPER_ADMIN')
-  async history(@Query('orgId') orgId: string) {
-    const tokens = await this.magicLinkService.getHistoryByOrg(orgId);
-    return { success: true, data: tokens };
+  history(@Query('orgId') orgId: string) {
+    return this.magicLinkService.getHistoryByOrg(orgId);
   }
 }
 
@@ -107,25 +85,17 @@ export class MagicLinkPublicController {
    * El frontend lo usa para mostrar la pantalla de activación (nombre + empresa)
    * antes de que el usuario complete el flujo OAuth.
    * GET /auth/magic-link?token=xxx
+   *
+   * S-02: throttle estricto (10/60s) — endpoint público que revela información
+   * de existencia de tokens.
    */
   @Public()
+  @Throttle({ short: { ttl: 60_000, limit: 10 } })
   @Get('magic-link')
-  async validate(@Query('token') token: string) {
+  validate(@Query('token') token: string) {
     if (!token) {
-      return {
-        success: false,
-        data: { valid: false, error: 'TOKEN_NOT_FOUND' },
-        message: 'Token no proporcionado.',
-      };
+      return { valid: false, error: 'TOKEN_NOT_FOUND' };
     }
-
-    const result = await this.magicLinkService.validate(token);
-    return {
-      success: result.valid,
-      data: result,
-      message: result.valid
-        ? 'Token válido.'
-        : 'Token inválido o expirado.',
-    };
+    return this.magicLinkService.validate(token);
   }
 }

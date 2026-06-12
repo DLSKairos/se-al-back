@@ -402,7 +402,9 @@ export class AuthOAuthService {
         last_oauth_sync: new Date(),
       });
 
-      return `${frontendUrl}/auth/callback?token=${jwt}&activated=1`;
+      // S-03: JWT en el fragment (#) para que el token no llegue al servidor
+      // ni quede en el historial de navegación ni en logs de acceso del proxy.
+      return `${frontendUrl}/auth/callback#token=${jwt}&activated=1`;
     }
 
     // ── FLUJO LOGIN (sin magic token) ─────────────────────────────────────────
@@ -450,7 +452,9 @@ export class AuthOAuthService {
       last_oauth_sync: new Date(),
     });
 
-    return `${frontendUrl}/auth/callback?token=${jwt}`;
+    // S-03: JWT en el fragment (#) para que el token no llegue al servidor
+    // ni quede en el historial de navegación ni en logs de acceso del proxy.
+    return `${frontendUrl}/auth/callback#token=${jwt}`;
   }
 
   // ─── Redis: consumir state (single-use, anti-CSRF) ───────────────────────────

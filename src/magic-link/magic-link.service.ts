@@ -29,7 +29,9 @@ interface INotificationsService {
 
 export interface MagicLinkValidateResult {
   valid: boolean;
-  userId?: string;
+  /** S-07: userId NO se incluye en validate() para minimizar exposición de datos.
+   * El userId solo está disponible en validateAndConsume() (llamada autenticada
+   * durante el flujo OAuth server-side). */
   adminName?: string;
   orgName?: string;
   purpose?: MagicLinkPurpose;
@@ -251,9 +253,11 @@ export class MagicLinkService {
       return { valid: false, error: 'TOKEN_EXPIRED' };
     }
 
+    // S-07: NO se devuelve userId para minimizar la exposición de datos del
+    // usuario en una ruta pública. El frontend solo necesita adminName, orgName
+    // y purpose para mostrar la pantalla de activación.
     return {
       valid: true,
-      userId: record.user_id,
       adminName: record.user.name,
       orgName: record.user.org.name,
       purpose: record.purpose,

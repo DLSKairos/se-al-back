@@ -58,6 +58,14 @@ export class SuperadminController {
   }
 
   /**
+   * Lista los administradores de una organización (para asignar magic links).
+   */
+  @Get('organizations/:id/administrators')
+  findAdministrators(@Param('id') id: string) {
+    return this.superadminService.findAdministrators(id);
+  }
+
+  /**
    * Métricas de uso: usuarios activos vs máximo, sedes activas vs máximo.
    * Cacheado en Redis TTL 60s.
    */

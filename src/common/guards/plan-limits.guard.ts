@@ -107,29 +107,18 @@ export class PlanLimitsGuard implements CanActivate {
     return config;
   }
 
-  private async getCurrentUserCount(orgId: string): Promise<number> {
-    const cacheKey = `plan_limits:${orgId}:users`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return parseInt(cached, 10);
-
-    const count = await this.prisma.user.count({
+  // S-09: los conteos se consultan SIEMPRE a BD (sin caché) para que el
+  // enforcement del límite no sea bypasseable con peticiones concurrentes
+  // dentro de la ventana del TTL. El OrgConfig sí se mantiene cacheado.
+  private getCurrentUserCount(orgId: string): Promise<number> {
+    return this.prisma.user.count({
       where: { org_id: orgId, is_active: true },
     });
-
-    await this.redis.set(cacheKey, String(count), 30);
-    return count;
   }
 
-  private async getCurrentSiteCount(orgId: string): Promise<number> {
-    const cacheKey = `plan_limits:${orgId}:sites`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return parseInt(cached, 10);
-
-    const count = await this.prisma.workLocation.count({
+  private getCurrentSiteCount(orgId: string): Promise<number> {
+    return this.prisma.workLocation.count({
       where: { org_id: orgId, is_active: true },
     });
-
-    await this.redis.set(cacheKey, String(count), 30);
-    return count;
   }
 }

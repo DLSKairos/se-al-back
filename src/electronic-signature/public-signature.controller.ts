@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -10,12 +11,46 @@ import {
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
 import { ElectronicSignatureService } from './electronic-signature.service';
 import { SignExternalDto } from './dto/sign-external.dto';
+
+// ─── Magic bytes para validación de tipo real de imagen ───────────────────────
+
+/** Firma de bytes JPEG: FF D8 FF */
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+/** Firma de bytes PNG: 89 50 4E 47 0D 0A 1A 0A */
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/** Firma de bytes WebP: RIFF....WEBP (bytes 0-3 y 8-11) */
+const WEBP_RIFF = Buffer.from([0x52, 0x49, 0x46, 0x46]);
+const WEBP_WEBP = Buffer.from([0x57, 0x45, 0x42, 0x50]);
+
+/**
+ * S-10: valida que el buffer corresponde a una imagen JPEG, PNG o WebP
+ * verificando los magic bytes reales del archivo (no el campo mimetype que
+ * el cliente puede falsificar).
+ */
+function validateImageMagicBytes(buf: Buffer, fieldName: string): void {
+  if (buf.length < 12) {
+    throw new BadRequestException(`${fieldName}: archivo demasiado pequeño para ser una imagen válida`);
+  }
+
+  const isJpeg = buf.subarray(0, 3).equals(JPEG_MAGIC);
+  const isPng = buf.subarray(0, 8).equals(PNG_MAGIC);
+  const isWebp =
+    buf.subarray(0, 4).equals(WEBP_RIFF) &&
+    buf.subarray(8, 12).equals(WEBP_WEBP);
+
+  if (!isJpeg && !isPng && !isWebp) {
+    throw new BadRequestException(
+      `${fieldName}: el archivo no es una imagen JPEG, PNG o WebP válida`,
+    );
+  }
+}
 
 /**
  * Controlador de firma electrónica — rutas PÚBLICAS para firmantes externos.
@@ -26,8 +61,12 @@ import { SignExternalDto } from './dto/sign-external.dto';
  * La autenticación es el token de firma de un solo uso en la URL.
  *
  * Estas rutas corresponden a la ruta /firma/:token del frontend.
+ *
+ * S-02: throttle más estricto (10 req/60s) porque son rutas públicas y de alto
+ * valor (contienen evidencia legal de firma).
  */
 @Public()
+@Throttle({ short: { ttl: 60_000, limit: 10 } })
 @Controller('public/signature')
 export class PublicSignatureController {
   constructor(
@@ -110,6 +149,10 @@ export class PublicSignatureController {
       };
     }
 
+    // S-10: validar magic bytes antes de procesar (el mimetype del cliente puede falsificarse)
+    validateImageMagicBytes(files.foto_cedula[0].buffer, 'foto_cedula');
+    validateImageMagicBytes(files.selfie[0].buffer, 'selfie');
+
     return this.signatureService.uploadExternalIdentity(
       token,
       files.foto_cedula[0].buffer,
@@ -149,12 +192,13 @@ export class PublicSignatureController {
 
   // ─── helpers ─────────────────────────────────────────────────────────────
 
-  /** Extrae IP real considerando proxies (X-Forwarded-For) */
+  /**
+   * S-04: usa req.ip que Express resuelve correctamente a través del proxy
+   * cuando trust proxy está activo (configurado en main.ts).
+   * Evita parsear manualmente x-forwarded-for (spoofable si el header se
+   * pasa directo al backend sin pasar por el proxy confiable).
+   */
   private extractIp(req: Request): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
-    }
-    return req.socket?.remoteAddress ?? 'desconocida';
+    return req.ip ?? req.socket?.remoteAddress ?? 'desconocida';
   }
 }

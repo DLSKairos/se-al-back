@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -39,6 +40,9 @@ import { StatusModule } from './status/status.module';
 
 @Module({
   providers: [
+    // S-02: ThrottlerGuard PRIMERO (rate limit antes de validar JWT para limitar
+    // ataques de fuerza bruta sin consumir recursos de autenticación)
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Guards globales: JwtAuthGuard primero (autentica), RolesGuard segundo (autoriza)
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
@@ -49,6 +53,10 @@ import { StatusModule } from './status/status.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // S-02: Rate limiting global — 30 requests / 60s por IP
+    // Los endpoints públicos sensibles sobrescriben este límite con @Throttle
+    ThrottlerModule.forRoot([{ name: 'short', ttl: 60_000, limit: 30 }]),
 
     // Cron jobs
     ScheduleModule.forRoot(),

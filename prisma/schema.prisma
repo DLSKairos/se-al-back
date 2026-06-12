@@ -638,6 +638,7 @@ model SignatureRecord {
   external_signer ExternalSigner? @relation("ExternalSignerRecords", fields: [external_signer_id], references: [id], onDelete: SetNull)
   signature_token SignatureToken? @relation("TokenSignatureRecord", fields: [signature_token_id], references: [id], onDelete: SetNull)
 
+  @@unique([submission_id, internal_user_id])
   @@index([submission_id])
   @@index([internal_user_id])
   @@index([external_signer_id])

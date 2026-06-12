@@ -204,12 +204,11 @@ export class ElectronicSignatureController {
 
   // ─── helpers ─────────────────────────────────────────────────────────────
 
-  /** Extrae IP real considerando proxies (X-Forwarded-For) */
+  /**
+   * S-04: usa req.ip que Express resuelve correctamente a través del proxy
+   * cuando trust proxy está activo (configurado en main.ts).
+   */
   private extractIp(req: Request): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
-    }
-    return req.socket?.remoteAddress ?? 'desconocida';
+    return req.ip ?? req.socket?.remoteAddress ?? 'desconocida';
   }
 }

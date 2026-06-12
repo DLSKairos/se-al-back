@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -23,6 +24,20 @@ import { JwtPayload } from '../auth/dto/jwt-payload.dto';
  * - /master/* — lectura y sugerencias (todos los usuarios autenticados)
  * - /admin/master/* — gestión (solo ADMIN)
  */
+
+// S-08: el param :type llega como string arbitrario en runtime; validar contra
+// whitelist antes de pasarlo al servicio.
+const VALID_MASTER_TYPES = ['positions', 'roles', 'departments'] as const;
+type MasterType = (typeof VALID_MASTER_TYPES)[number];
+
+function parseMasterType(raw: string): MasterType {
+  if (!(VALID_MASTER_TYPES as readonly string[]).includes(raw)) {
+    throw new BadRequestException(
+      `Tipo inválido: "${raw}". Valores permitidos: ${VALID_MASTER_TYPES.join(', ')}`,
+    );
+  }
+  return raw as MasterType;
+}
 
 // ─── Controlador de lectura y sugerencias ─────────────────────────────────
 
@@ -99,12 +114,12 @@ export class MasterListsAdminController {
    */
   @Patch(':type/:id')
   updateItem(
-    @Param('type') type: 'positions' | 'roles' | 'departments',
+    @Param('type') rawType: string,
     @Param('id') id: string,
     @Body() dto: CreateMasterItemDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.masterListsService.updateItem(type, id, user.orgId, dto);
+    return this.masterListsService.updateItem(parseMasterType(rawType), id, user.orgId, dto);
   }
 
   /**
@@ -113,11 +128,11 @@ export class MasterListsAdminController {
   @Patch(':type/:id/deactivate')
   @HttpCode(HttpStatus.OK)
   deactivateItem(
-    @Param('type') type: 'positions' | 'roles' | 'departments',
+    @Param('type') rawType: string,
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.masterListsService.deactivateItem(type, id, user.orgId);
+    return this.masterListsService.deactivateItem(parseMasterType(rawType), id, user.orgId);
   }
 
   /**

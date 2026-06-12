@@ -318,7 +318,11 @@ export class ElectronicSignatureService {
   /**
    * Registra la firma del firmante externo.
    * Valida: token válido, tiempo mínimo de lectura, datos completos.
-   * Crea SignatureRecord, marca token como usado, llama checkAutoApproval.
+   *
+   * S-01 (CRÍTICO): el consumo del token + creación del SignatureRecord ocurren
+   * en una sola transacción Prisma con UPDATE condicional WHERE used_at IS NULL.
+   * Si otro hilo ya consumió el token entre validateAndLoadToken y aquí,
+   * Prisma lanza P2025 (record not found) → BadRequestException TOKEN_USED.
    */
   async signExternal(
     token: string,
@@ -336,37 +340,55 @@ export class ElectronicSignatureService {
     // Validar tiempo mínimo de lectura
     this.validateReadingTime(dto.reading_log, minSeconds);
 
-    // Calcular hash canónico
+    // S-05: validar section_or_field_id contra el conjunto real del documento
+    this.validateReadingLogIds(dto.reading_log, submission);
+
+    // Calcular hash canónico as-of ahora (momento de la firma)
     const documentHash = await this.computeDocumentHash(submission);
 
-    // Crear SignatureRecord
-    const record = await this.prisma.signatureRecord.create({
-      data: {
-        submission_id: submission.id,
-        signer_type: SignerType.EXTERNAL,
-        external_signer_id: signer.id,
-        signature_token_id: signatureToken.id,
-        ip_address: ipAddress,
-        user_agent: userAgent,
-        geo_location: { lat: dto.geo_lat, lng: dto.geo_lng, accuracy: dto.geo_accuracy ?? null },
-        reading_log: dto.reading_log as unknown as Prisma.InputJsonValue,
-        min_reading_seconds: minSeconds,
-        stroke_image_base64: dto.stroke_image_base64,
-        stroke_vectors: dto.stroke_vectors as unknown as Prisma.InputJsonValue,
-        document_hash: documentHash,
-        hash_version: HASH_VERSION,
-        webauthn_session: false,
-      },
-    });
+    // S-01: consumo atómico del token + creación del record en una transacción.
+    // El UPDATE usa WHERE used_at IS NULL — si ya fue usado, P2025 → TOKEN_USED.
+    let record: { id: string; signed_at: Date; document_hash: string };
+    try {
+      record = await this.prisma.$transaction(async (tx) => {
+        // Actualización condicional: solo si el token todavía no ha sido usado
+        await tx.signatureToken.update({
+          where: { id: signatureToken.id, used_at: null },
+          data: {
+            used_at: new Date(),
+            link_status: SignatureLinkStatus.SIGNED,
+          },
+        });
 
-    // Marcar token como usado y estado SIGNED
-    await this.prisma.signatureToken.update({
-      where: { id: signatureToken.id },
-      data: {
-        used_at: new Date(),
-        link_status: SignatureLinkStatus.SIGNED,
-      },
-    });
+        return tx.signatureRecord.create({
+          data: {
+            submission_id: submission.id,
+            signer_type: SignerType.EXTERNAL,
+            external_signer_id: signer.id,
+            signature_token_id: signatureToken.id,
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            geo_location: { lat: dto.geo_lat, lng: dto.geo_lng, accuracy: dto.geo_accuracy ?? null },
+            reading_log: dto.reading_log as unknown as Prisma.InputJsonValue,
+            min_reading_seconds: minSeconds,
+            stroke_image_base64: dto.stroke_image_base64,
+            stroke_vectors: dto.stroke_vectors as unknown as Prisma.InputJsonValue,
+            document_hash: documentHash,
+            hash_version: HASH_VERSION,
+            webauthn_session: false,
+          },
+          select: { id: true, signed_at: true, document_hash: true },
+        });
+      });
+    } catch (err: unknown) {
+      if (this.isPrismaRecordNotFound(err)) {
+        throw new BadRequestException({
+          code: 'TOKEN_USED',
+          message: 'Este enlace ya fue utilizado para firmar',
+        });
+      }
+      throw err;
+    }
 
     // Invalidar cache Redis del token
     await this.redis.del(`${REDIS_TOKEN_PREFIX}${token}`);
@@ -400,6 +422,13 @@ export class ElectronicSignatureService {
 
   /**
    * Registra la firma de un usuario interno (operario o admin autenticado).
+   *
+   * S-01: el findFirst + create original no era atómico.
+   * El unique constraint @@unique([submission_id, internal_user_id]) en la BD
+   * garantiza atomicidad: si dos requests concurrentes intentan firmar al mismo
+   * tiempo, uno de ellos recibe P2002 → ConflictException.
+   * Se mantiene el findFirst previo como fast-path para dar el mensaje correcto
+   * antes de llegar a BD, pero la garantía real es el constraint.
    */
   async signInternal(
     submissionId: string,
@@ -412,7 +441,7 @@ export class ElectronicSignatureService {
   ) {
     const submission = await this.requireSubmission(submissionId, orgId);
 
-    // Verificar que el usuario no firmó ya este submission
+    // Fast-path: verificar firma previa (no atómico, pero reduce carga en el constraint)
     const existing = await this.prisma.signatureRecord.findFirst({
       where: {
         submission_id: submissionId,
@@ -431,30 +460,42 @@ export class ElectronicSignatureService {
     // Validar tiempo mínimo de lectura
     this.validateReadingTime(dto.reading_log, minSeconds);
 
-    // Calcular hash canónico
+    // S-05: validar section_or_field_id contra el conjunto real del documento
+    this.validateReadingLogIds(dto.reading_log, submission);
+
+    // Calcular hash canónico as-of ahora (momento de la firma)
     const documentHash = await this.computeDocumentHash(submission);
 
-    const record = await this.prisma.signatureRecord.create({
-      data: {
-        submission_id: submissionId,
-        signer_type: SignerType.INTERNAL,
-        internal_user_id: userId,
-        ip_address: ipAddress,
-        user_agent: userAgent,
-        geo_location: {
-          lat: dto.geo_lat,
-          lng: dto.geo_lng,
-          accuracy: dto.geo_accuracy ?? null,
+    let record: { id: string; signed_at: Date; document_hash: string };
+    try {
+      record = await this.prisma.signatureRecord.create({
+        data: {
+          submission_id: submissionId,
+          signer_type: SignerType.INTERNAL,
+          internal_user_id: userId,
+          ip_address: ipAddress,
+          user_agent: userAgent,
+          geo_location: {
+            lat: dto.geo_lat,
+            lng: dto.geo_lng,
+            accuracy: dto.geo_accuracy ?? null,
+          },
+          reading_log: dto.reading_log as unknown as Prisma.InputJsonValue,
+          min_reading_seconds: minSeconds,
+          stroke_image_base64: dto.stroke_image_base64,
+          stroke_vectors: dto.stroke_vectors as unknown as Prisma.InputJsonValue,
+          document_hash: documentHash,
+          hash_version: HASH_VERSION,
+          webauthn_session: dto.webauthn_session_active ?? false,
         },
-        reading_log: dto.reading_log as unknown as Prisma.InputJsonValue,
-        min_reading_seconds: minSeconds,
-        stroke_image_base64: dto.stroke_image_base64,
-        stroke_vectors: dto.stroke_vectors as unknown as Prisma.InputJsonValue,
-        document_hash: documentHash,
-        hash_version: HASH_VERSION,
-        webauthn_session: dto.webauthn_session_active ?? false,
-      },
-    });
+        select: { id: true, signed_at: true, document_hash: true },
+      });
+    } catch (err: unknown) {
+      if (this.isPrismaUniqueViolation(err)) {
+        throw new ConflictException('Ya has firmado este permiso anteriormente');
+      }
+      throw err;
+    }
 
     this.logger.log(
       `Firma INTERNA registrada: submission=${submissionId} user=${userId} record=${record.id}`,
@@ -562,10 +603,17 @@ export class ElectronicSignatureService {
   /**
    * Verifica la integridad del documento recalculando el hash canónico desde BD
    * y comparándolo contra cada SignatureRecord.
+   *
+   * BUG-1 / S-06: para cada record se recalcula el hash as-of = record.signed_at,
+   * usando los firmantes que existían en ese momento. Esto garantiza que agregar
+   * firmantes DESPUÉS no invalide una firma que ya fue registrada.
+   *
+   * Registros con hash_version === 1 no son verificables con v2 (stableStringify
+   * vs JSON.stringify difieren). Se marcan con valid=null y reason=HASH_V1_NO_VERIFICABLE
+   * para no romper el historial de auditoría pre-migración.
    */
   async verifyDocumentIntegrity(submissionId: string, orgId: string) {
     const submission = await this.requireSubmission(submissionId, orgId);
-    const currentHash = await this.computeDocumentHash(submission);
 
     const records = await this.prisma.signatureRecord.findMany({
       where: { submission_id: submissionId },
@@ -578,29 +626,53 @@ export class ElectronicSignatureService {
       },
     });
 
-    const validatedRecords = records.map((r) => ({
-      record_id: r.id,
-      signer_type: r.signer_type,
-      signed_at: r.signed_at,
-      stored_hash: r.document_hash,
-      current_hash: currentHash,
-      valid: r.document_hash === currentHash,
-      hash_version: r.hash_version,
-    }));
+    const validatedRecords = await Promise.all(
+      records.map(async (r) => {
+        // Registros v1: no verificables con el algoritmo v2
+        if (r.hash_version === 1) {
+          return {
+            record_id: r.id,
+            signer_type: r.signer_type,
+            signed_at: r.signed_at,
+            stored_hash: r.document_hash,
+            current_hash: null as string | null,
+            valid: null as boolean | null,
+            reason: 'HASH_V1_NO_VERIFICABLE' as string | undefined,
+            hash_version: r.hash_version,
+          };
+        }
 
-    const allValid = validatedRecords.every((r) => r.valid);
+        // v2+: recalcular con los firmantes as-of = signed_at
+        const hashAtSignTime = await this.computeDocumentHash(submission, r.signed_at);
+        return {
+          record_id: r.id,
+          signer_type: r.signer_type,
+          signed_at: r.signed_at,
+          stored_hash: r.document_hash,
+          current_hash: hashAtSignTime,
+          valid: (r.document_hash === hashAtSignTime) as boolean | null,
+          reason: undefined as string | undefined,
+          hash_version: r.hash_version,
+        };
+      }),
+    );
+
+    // allValid ignora records null (v1 — no verificables), solo falla si hay false explícito
+    const allValid = validatedRecords.every((r) => r.valid !== false);
 
     if (!allValid) {
       this.logger.warn(
         `Integridad comprometida en submission=${submissionId}. ` +
-          `Records inválidos: ${validatedRecords.filter((r) => !r.valid).map((r) => r.record_id).join(', ')}`,
+          `Records inválidos: ${validatedRecords
+            .filter((r) => r.valid === false)
+            .map((r) => r.record_id)
+            .join(', ')}`,
       );
     }
 
     return {
       submission_id: submissionId,
       valid: allValid,
-      current_hash: currentHash,
       records: validatedRecords,
     };
   }
@@ -830,6 +902,7 @@ export class ElectronicSignatureService {
 
   /**
    * Valida que la suma total de segundos del log de lectura sea >= umbral.
+   * S-05: aplica cap de 300s por sección antes de sumar (evita manipulación client-side).
    * Lanza 422 con mensaje claro si no se cumple.
    */
   private validateReadingTime(
@@ -838,8 +911,10 @@ export class ElectronicSignatureService {
   ): void {
     if (minSeconds === 0) return;
 
+    const MAX_SECONDS_PER_SECTION = 300;
+
     const totalSeconds = readingLog.reduce(
-      (acc, entry) => acc + entry.seconds_viewed,
+      (acc, entry) => acc + Math.min(entry.seconds_viewed, MAX_SECONDS_PER_SECTION),
       0,
     );
 
@@ -852,12 +927,56 @@ export class ElectronicSignatureService {
   }
 
   /**
+   * S-05: valida que cada section_or_field_id del reading_log exista en el
+   * conjunto real de secciones/campos del submission. Lanza 422 si hay IDs inválidos.
+   *
+   * El conjunto válido se deriva de los field.section y field.id de los values
+   * del submission. Un ID es válido si coincide con una sección real o con un
+   * field_id real del documento.
+   */
+  private validateReadingLogIds(
+    readingLog: ReadingLogEntryDto[],
+    submission: Awaited<ReturnType<typeof this.requireSubmission>>,
+  ): void {
+    if (readingLog.length === 0) return;
+
+    // Construir el set de IDs válidos: secciones + field_ids del submission
+    const validIds = new Set<string>();
+    for (const v of submission.values) {
+      validIds.add(v.field_id); // ID del campo
+      if (v.field.section) {
+        validIds.add(v.field.section); // nombre de la sección (usado como ID por externos)
+      }
+    }
+
+    const invalidIds = readingLog
+      .map((e) => e.section_or_field_id)
+      .filter((id) => !validIds.has(id));
+
+    if (invalidIds.length > 0) {
+      throw new UnprocessableEntityException(
+        `section_or_field_id inválido(s) en reading_log: ${invalidIds.join(', ')}`,
+      );
+    }
+  }
+
+  /**
    * Construye el objeto canónico del documento y calcula su hash SHA-256.
    * El objeto canónico es versionado (ver canonical-hash.util.ts).
+   *
+   * BUG-1 / S-06 (v2): asOf controla qué firmantes se incluyen en el hash.
+   * - signature_tokens con created_at <= asOf (firmantes externos invitados antes de asOf)
+   * - signature_records con signed_at <= asOf (firmantes que ya habían firmado antes de asOf)
+   * Si asOf es undefined, se usa la fecha actual (comportamiento "ahora").
+   * Esto garantiza que el hash calculado al momento de la firma no cambia cuando
+   * se agregan más firmantes después.
    */
   private async computeDocumentHash(
     submission: Awaited<ReturnType<typeof this.requireSubmission>>,
+    asOf?: Date,
   ): Promise<string> {
+    const cutoff = asOf ?? new Date();
+
     // Construir lista de preguntas ordenadas por field.id asc
     const preguntas: CanonicalQuestion[] = submission.values
       .slice()
@@ -868,15 +987,24 @@ export class ElectronicSignatureService {
         respuesta: this.resolveSubmissionValue(v),
       }));
 
-    // Construir lista de firmantes (externos con cédula, internos con user_id)
+    // Firmantes externos: tokens creados en o antes del cutoff
     const tokens = await this.prisma.signatureToken.findMany({
-      where: { submission_id: submission.id },
+      where: {
+        submission_id: submission.id,
+        created_at: { lte: cutoff },
+      },
       include: {
         external_signer: { select: { identification_number: true, name: true } },
       },
     });
+
+    // Firmantes internos: records firmados en o antes del cutoff
     const internalRecords = await this.prisma.signatureRecord.findMany({
-      where: { submission_id: submission.id, signer_type: SignerType.INTERNAL },
+      where: {
+        submission_id: submission.id,
+        signer_type: SignerType.INTERNAL,
+        signed_at: { lte: cutoff },
+      },
       include: {
         internal_user: { select: { id: true, name: true, identification_number: true } },
       },
@@ -991,13 +1119,27 @@ export class ElectronicSignatureService {
     }
   }
 
-  /** Detecta violación de unique constraint de Prisma */
+  /** Detecta violación de unique constraint de Prisma (P2002) */
   private isPrismaUniqueViolation(err: unknown): boolean {
     return (
       typeof err === 'object' &&
       err !== null &&
       'code' in err &&
       (err as { code: string }).code === 'P2002'
+    );
+  }
+
+  /**
+   * Detecta que el registro a actualizar/eliminar no se encontró (P2025).
+   * Ocurre en la transacción de signExternal cuando el token ya fue usado
+   * por otro hilo concurrente (race condition).
+   */
+  private isPrismaRecordNotFound(err: unknown): boolean {
+    return (
+      typeof err === 'object' &&
+      err !== null &&
+      'code' in err &&
+      (err as { code: string }).code === 'P2025'
     );
   }
 }
