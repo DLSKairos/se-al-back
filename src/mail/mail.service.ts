@@ -19,14 +19,16 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
   private readonly resend: Resend;
   private readonly from: string;
+  private readonly enabled: boolean;
 
   constructor(private readonly config: ConfigService) {
     const apiKey = this.config.get<string>('RESEND_API_KEY') ?? '';
     this.from = this.config.get<string>('RESEND_FROM', 'SEÑAL <no-reply@señal.kairosdls.com>');
+    this.enabled = !!apiKey;
 
-    if (!apiKey) {
+    if (!this.enabled) {
       this.logger.warn(
-        'MailService: RESEND_API_KEY no configurada. El envío de emails no estará disponible.',
+        'MailService: RESEND_API_KEY no configurada. Los emails se omitirán y se loggearán en consola.',
       );
     }
 
@@ -59,6 +61,11 @@ export class MailService {
   }
 
   private async send(to: string, subject: string, html: string, text?: string): Promise<void> {
+    if (!this.enabled) {
+      this.logger.warn(`[DEV] Email omitido (sin RESEND_API_KEY). To: ${to} | Subject: ${subject}`);
+      return;
+    }
+
     const { error } = await this.resend.emails.send({
       from: this.from,
       to: [to],
