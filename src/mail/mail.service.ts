@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
+import { Resend } from 'resend';
 
 export interface MagicLinkFirstAccessContext {
   adminName: string;
@@ -15,113 +14,62 @@ export interface MagicLinkInviteContext {
   link: string;
 }
 
-/**
- * Servicio de email reutilizable para SEÑAL.
- * Usa nodemailer con SMTP configurado vía variables de entorno.
- * Si las variables SMTP faltan, registra un warning en el arranque y
- * los métodos de envío lanzan un error claro (no crashea el boot).
- */
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private transporter: Transporter | null = null;
+  private readonly resend: Resend;
+  private readonly from: string;
 
   constructor(private readonly config: ConfigService) {
-    this.initTransporter();
-  }
+    const apiKey = this.config.get<string>('RESEND_API_KEY') ?? '';
+    this.from = this.config.get<string>('RESEND_FROM', 'SEÑAL <no-reply@señal.kairosdls.com>');
 
-  // ─── Inicialización lazy ────────────────────────────────────────────────────
-
-  private initTransporter(): void {
-    const host = this.config.get<string>('SMTP_HOST');
-    const port = this.config.get<number>('SMTP_PORT');
-    const user = this.config.get<string>('SMTP_USER');
-    const pass = this.config.get<string>('SMTP_PASS');
-    const from = this.config.get<string>('SMTP_FROM');
-
-    const missing = [
-      !host && 'SMTP_HOST',
-      !port && 'SMTP_PORT',
-      !user && 'SMTP_USER',
-      !pass && 'SMTP_PASS',
-      !from && 'SMTP_FROM',
-    ].filter(Boolean);
-
-    if (missing.length > 0) {
+    if (!apiKey) {
       this.logger.warn(
-        `MailService: variables de entorno faltantes [${missing.join(', ')}]. ` +
-          'El envío de emails no estará disponible hasta que sean configuradas.',
-      );
-      return;
-    }
-
-    this.transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: Number(port) === 465,
-      auth: { user, pass },
-    });
-
-    this.logger.log(`MailService: transporter inicializado (${host}:${port})`);
-  }
-
-  // ─── Validación ─────────────────────────────────────────────────────────────
-
-  private ensureTransporter(): Transporter {
-    if (!this.transporter) {
-      throw new Error(
-        'El servicio de email no está configurado. ' +
-          'Completa las variables SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS y SMTP_FROM en el .env.',
+        'MailService: RESEND_API_KEY no configurada. El envío de emails no estará disponible.',
       );
     }
-    return this.transporter;
+
+    this.resend = new Resend(apiKey);
+    this.logger.log('MailService: Resend inicializado');
   }
 
-  // ─── Envío ──────────────────────────────────────────────────────────────────
-
-  /**
-   * Envía el email de primer acceso al administrador recién creado.
-   * El link lleva a la pantalla donde el admin vincula su cuenta OAuth.
-   */
   async sendMagicLinkFirstAccess(
     to: string,
     ctx: MagicLinkFirstAccessContext,
   ): Promise<void> {
-    const transporter = this.ensureTransporter();
-    const from = this.config.get<string>('SMTP_FROM');
-
-    const html = buildFirstAccessTemplate(ctx);
-
-    await transporter.sendMail({
-      from,
-      to,
-      subject: `Tu acceso a SEÑAL está listo — ${ctx.orgName}`,
-      html,
-    });
-
+    await this.send(to, `Tu acceso a SEÑAL está listo — ${ctx.orgName}`, buildFirstAccessTemplate(ctx));
     this.logger.log(`Email de primer acceso enviado a ${to} (org: ${ctx.orgName})`);
   }
 
-  /**
-   * Envía la invitación a un administrador existente.
-   */
   async sendMagicLinkInvite(
     to: string,
     ctx: MagicLinkInviteContext,
   ): Promise<void> {
-    const transporter = this.ensureTransporter();
-    const from = this.config.get<string>('SMTP_FROM');
-
-    const html = buildInviteTemplate(ctx);
-
-    await transporter.sendMail({
-      from,
+    await this.send(
       to,
-      subject: `Has sido invitado/a como administrador de ${ctx.orgName} en SEÑAL`,
+      `Has sido invitado/a como administrador de ${ctx.orgName} en SEÑAL`,
+      buildInviteTemplate(ctx),
+    );
+    this.logger.log(`Email de invitación enviado a ${to} (org: ${ctx.orgName})`);
+  }
+
+  async sendEmail(to: string, subject: string, html: string, text?: string): Promise<void> {
+    await this.send(to, subject, html, text);
+  }
+
+  private async send(to: string, subject: string, html: string, text?: string): Promise<void> {
+    const { error } = await this.resend.emails.send({
+      from: this.from,
+      to: [to],
+      subject,
       html,
+      ...(text ? { text } : {}),
     });
 
-    this.logger.log(`Email de invitación enviado a ${to} (org: ${ctx.orgName})`);
+    if (error) {
+      throw new Error(`Resend: ${error.message}`);
+    }
   }
 }
 

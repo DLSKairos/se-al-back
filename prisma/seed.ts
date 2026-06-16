@@ -124,6 +124,20 @@ async function main(): Promise<void> {
 
   const pinHash = await bcrypt.hash('1234', 10);
 
+  const superAdminUser = await prisma.user.upsert({
+    where: { identification_number: '1000000000' },
+    update: {},
+    create: {
+      org_id: org.id,
+      name: 'Super Admin',
+      identification_number: '1000000000',
+      job_title: 'Super Administrador',
+      role: UserRole.SUPER_ADMIN,
+      pin_enabled: true,
+      pin_hash: pinHash,
+    },
+  });
+
   const adminUser = await prisma.user.upsert({
     where: { identification_number: '1000000001' },
     update: {},
@@ -131,6 +145,7 @@ async function main(): Promise<void> {
       org_id: org.id,
       name: 'Admin Demo',
       identification_number: '1000000001',
+      email: 'admin@demo.senal.dev',
       job_title: 'Administrador',
       role: UserRole.ADMIN,
       pin_enabled: true,
@@ -167,7 +182,7 @@ async function main(): Promise<void> {
     },
   });
 
-  console.log(`Users: ${adminUser.name} (ADMIN), ${operator1.name} (OPERATOR), ${operator2.name} (OPERATOR)`);
+  console.log(`Users: ${superAdminUser.name} (SUPER_ADMIN), ${adminUser.name} (ADMIN), ${operator1.name} (OPERATOR), ${operator2.name} (OPERATOR)`);
 
   // ─── 5. ATTENDANCE CONFIG ─────────────────────────────────
 

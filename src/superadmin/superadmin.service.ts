@@ -80,13 +80,15 @@ export class SuperadminService {
     return organizations.map((org) => ({
       id: org.id,
       name: org.name,
-      display_name: org.config?.display_name ?? org.name,
-      plan: org.config?.plan ?? null,
-      active_users: userCountMap.get(org.id) ?? 0,
-      max_users: org.config?.max_users ?? null,
-      active_sites: siteCountMap.get(org.id) ?? 0,
-      max_sites: org.config?.max_sites ?? null,
       created_at: org.created_at,
+      config: org.config ?? null,
+      usage: {
+        current_users: userCountMap.get(org.id) ?? 0,
+        max_users: org.config?.max_users ?? null,
+        current_sites: siteCountMap.get(org.id) ?? 0,
+        max_sites: org.config?.max_sites ?? null,
+        plan: org.config?.plan ?? null,
+      },
     }));
   }
 
@@ -95,16 +97,31 @@ export class SuperadminService {
   async findOneOrganization(orgId: string) {
     const org = await this.prisma.organization.findUnique({
       where: { id: orgId },
-      include: {
-        config: true,
-      },
+      include: { config: true },
     });
 
     if (!org) {
       throw new NotFoundException('Organización no encontrada');
     }
 
-    return org;
+    const [currentUsers, currentSites] = await Promise.all([
+      this.prisma.user.count({ where: { org_id: orgId, is_active: true } }),
+      this.prisma.workLocation.count({ where: { org_id: orgId, is_active: true } }),
+    ]);
+
+    return {
+      id: org.id,
+      name: org.name,
+      created_at: org.created_at,
+      config: org.config ?? null,
+      usage: {
+        current_users: currentUsers,
+        max_users: org.config?.max_users ?? null,
+        current_sites: currentSites,
+        max_sites: org.config?.max_sites ?? null,
+        plan: org.config?.plan ?? null,
+      },
+    };
   }
 
   // ─── Upsert OrgConfig ─────────────────────────────────────────────────────
@@ -179,10 +196,10 @@ export class SuperadminService {
     ]);
 
     const result = {
-      currentUsers,
-      maxUsers: config?.max_users ?? null,
-      currentSites,
-      maxSites: config?.max_sites ?? null,
+      current_users: currentUsers,
+      max_users: config?.max_users ?? null,
+      current_sites: currentSites,
+      max_sites: config?.max_sites ?? null,
       plan: config?.plan ?? null,
     };
 

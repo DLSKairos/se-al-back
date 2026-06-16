@@ -5,10 +5,9 @@ import {
   NotificationTrigger,
   UserRole,
 } from '@prisma/client';
-import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushNotificationsService } from '../push-notifications/push-notifications.service';
-import { ConfigService } from '@nestjs/config';
+import { MailService } from '../mail/mail.service';
 
 interface NotificationRecipients {
   type: 'role' | 'email' | 'department';
@@ -25,25 +24,12 @@ interface NotificationPayload {
 @Injectable()
 export class FormNotificationsService {
   private readonly logger = new Logger(FormNotificationsService.name);
-  private readonly mailer: nodemailer.Transporter;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly pushNotifications: PushNotificationsService,
-    private readonly config: ConfigService,
-  ) {
-    const smtpPort = this.config.get<number>('SMTP_PORT', 587);
-    this.mailer = nodemailer.createTransport({
-      host: this.config.get<string>('SMTP_HOST', 'localhost'),
-      port: smtpPort,
-      // Puerto 465 implica TLS directo; otros puertos usan STARTTLS (Fix #22)
-      secure: smtpPort === 465,
-      auth: {
-        user: this.config.get<string>('SMTP_USER'),
-        pass: this.config.get<string>('SMTP_PASS'),
-      },
-    });
-  }
+    private readonly mail: MailService,
+  ) {}
 
   /**
    * Busca notificaciones con trigger ON_SUBMIT habilitadas y las despacha.
@@ -151,18 +137,10 @@ export class FormNotificationsService {
     subject: string,
     body: string,
   ): Promise<void> {
-    const from = this.config.get<string>('SMTP_FROM', 'noreply@senal.app');
-
     await Promise.allSettled(
       emails.map((to) =>
-        this.mailer
-          .sendMail({
-            from,
-            to,
-            subject,
-            text: body,
-            html: `<p>${body.replace(/\n/g, '<br>')}</p>`,
-          })
+        this.mail
+          .sendEmail(to, subject, `<p>${body.replace(/\n/g, '<br>')}</p>`, body)
           .catch((err) => {
             this.logger.error(
               `[FormNotifications] Error enviando email a ${to}: ${(err as Error).message}`,
