@@ -12,6 +12,7 @@ import {
 import { SuperadminService } from './superadmin.service';
 import { UpdateOrgConfigDto } from './dto/update-org-config.dto';
 import { FirstAdminLinkDto } from './dto/first-admin-link.dto';
+import { CreateOrgAdminDto } from './dto/create-org-admin.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -55,6 +56,18 @@ export class SuperadminController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.superadminService.upsertOrgConfig(id, user.sub, dto);
+  }
+
+  /**
+   * Crea el primer usuario ADMIN de una organización.
+   */
+  @Post('organizations/:id/admin')
+  @HttpCode(HttpStatus.CREATED)
+  createAdmin(
+    @Param('id') orgId: string,
+    @Body() dto: CreateOrgAdminDto,
+  ) {
+    return this.superadminService.createOrgAdmin(orgId, dto);
   }
 
   /**

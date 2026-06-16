@@ -4,10 +4,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { MagicLinkService } from '../magic-link/magic-link.service';
 import { UpdateOrgConfigDto } from './dto/update-org-config.dto';
+import { CreateOrgAdminDto } from './dto/create-org-admin.dto';
 
 /**
  * SuperadminService — parametrización de organizaciones y métricas de uso.
@@ -25,6 +27,47 @@ export class SuperadminService {
     private readonly redis: RedisService,
     private readonly magicLink: MagicLinkService,
   ) {}
+
+  // ─── Crear usuario administrador ──────────────────────────────────────────
+
+  async createOrgAdmin(orgId: string, dto: CreateOrgAdminDto) {
+    const org = await this.prisma.organization.findUnique({ where: { id: orgId } });
+    if (!org) throw new NotFoundException('Organización no encontrada');
+
+    const existing = await this.prisma.user.findUnique({
+      where: { identification_number: dto.identification_number },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        'Ya existe un usuario con ese número de identificación',
+      );
+    }
+
+    const user = await this.prisma.user.create({
+      data: {
+        org_id: orgId,
+        name: dto.name,
+        identification_number: dto.identification_number,
+        email: dto.email,
+        job_title: dto.job_title ?? 'Administrador',
+        role: UserRole.ADMIN,
+        pin_enabled: false,
+        is_active: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        identification_number: true,
+        role: true,
+        created_at: true,
+      },
+    });
+
+    this.logger.log(`Admin ${user.id} creado para org ${orgId}`);
+
+    return user;
+  }
 
   // ─── Administradores de una organización ──────────────────────────────────
 
