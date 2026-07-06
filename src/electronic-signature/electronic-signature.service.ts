@@ -29,6 +29,7 @@ import {
 } from './canonical-hash.util';
 import { CreateExternalSignerDto } from './dto/create-external-signer.dto';
 import { CreateSignatureTokenDto } from './dto/create-signature-token.dto';
+import { randomToken } from '../common/utils/token.util';
 import { SignInternalDto } from './dto/sign-internal.dto';
 import { SignExternalDto } from './dto/sign-external.dto';
 import { UpdateSignatureConfigDto } from './dto/update-signature-config.dto';
@@ -147,6 +148,8 @@ export class ElectronicSignatureService {
 
     const signatureToken = await this.prisma.signatureToken.create({
       data: {
+        // Fix M3: token con 256 bits de entropía en vez de CUID.
+        token: randomToken(),
         submission_id: dto.form_submission_id,
         external_signer_id: dto.external_signer_id,
         expires_at: expiresAt,

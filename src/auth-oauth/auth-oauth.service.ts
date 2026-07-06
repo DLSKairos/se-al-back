@@ -260,11 +260,14 @@ export class AuthOAuthService {
     const claims = tokens.claims();
     const email = typeof claims?.email === 'string' ? claims.email : null;
     const providerId = typeof claims?.sub === 'string' ? claims.sub : null;
+    const emailVerified = claims?.email_verified === true;
     const accessToken = tokens.access_token ?? null;
     const refreshToken = tokens.refresh_token ?? null;
 
-    if (!email || !providerId) {
-      throw new UnauthorizedException('No se pudo obtener el email verificado de Google.');
+    // Fix M4: exigir email verificado por el IdP para evitar account-takeover
+    // por vinculación con un email no verificado.
+    if (!email || !providerId || !emailVerified) {
+      throw new UnauthorizedException('No se pudo obtener un email verificado de Google.');
     }
 
     this.logger.log(`[OAuth/Google] Callback exitoso — email: ${email}`);
@@ -360,7 +363,9 @@ export class AuthOAuthService {
       try {
         magicLinkData = await this.magicLinkService.validateAndConsume(magicToken);
       } catch {
-        this.logger.warn(`[OAuth] Magic link inválido durante activación — token: ${magicToken}`);
+        this.logger.warn(
+          `[OAuth] Magic link inválido durante activación — token: ${magicToken.slice(0, 8)}…`,
+        );
         return `${frontendUrl}/login?error=magic_link_invalid`;
       }
 
@@ -427,6 +432,20 @@ export class AuthOAuthService {
     if (!user.oauth_provider) {
       this.logger.warn(
         `[OAuth] Login rechazado — cuenta sin vincular — userId: ${user.id}`,
+      );
+      return `${frontendUrl}/login?error=not_registered`;
+    }
+
+    // Fix M4: verificar que el sujeto inmutable del IdP (provider + provider_id)
+    // coincida con el vinculado. Evita account-takeover cuando un atacante
+    // autentica con una cuenta distinta que reporta el mismo email.
+    if (
+      user.oauth_provider !== provider ||
+      user.oauth_provider_id !== providerId
+    ) {
+      this.logger.warn(
+        `[OAuth] Login rechazado — provider/subject no coincide — userId: ${user.id}, ` +
+          `provider: ${provider}`,
       );
       return `${frontendUrl}/login?error=not_registered`;
     }

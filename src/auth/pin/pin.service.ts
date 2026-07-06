@@ -10,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 import { User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PinRateLimiterService } from './pin-rate-limiter.service';
+import { isActivationCodeValid } from '../../common/utils/token.util';
 
 const BCRYPT_ROUNDS = 10;
 const PIN_REGEX = /^\d{4,8}$/;
@@ -32,7 +33,7 @@ export class PinService {
     identificationNumber: string,
     ip: string,
   ): Promise<{ pinEnabled: boolean; pinConfigured: boolean }> {
-    const allowed = await this.rateLimiter.checkLimit(ip);
+    const allowed = await this.rateLimiter.checkLimit(ip, identificationNumber);
     if (!allowed) {
       // Devolver false genérico sin revelar estado (no lanzar para no enumerar)
       return { pinEnabled: false, pinConfigured: false };
@@ -89,7 +90,7 @@ export class PinService {
   ): Promise<User> {
     this.validatePinFormat(pin);
 
-    const allowed = await this.rateLimiter.checkLimit(ip);
+    const allowed = await this.rateLimiter.checkLimit(ip, identificationNumber);
     if (!allowed) {
       throw new UnauthorizedException(
         'Demasiados intentos fallidos. Intente nuevamente en 15 minutos.',
@@ -113,20 +114,27 @@ export class PinService {
       throw new UnauthorizedException('PIN incorrecto');
     }
 
-    await this.rateLimiter.resetLimit(ip);
+    await this.rateLimiter.resetLimit(ip, identificationNumber);
     return user;
   }
 
   /**
    * Crea el PIN inicial de un usuario que aún no tiene PIN.
-   * Solo se permite si pin_hash === null (nunca ha tenido PIN).
-   * Aplica rate limiting por IP (Fix #4).
-   * Retorna el usuario actualizado para que AuthService genere el JWT.
+   * Solo se permite si pin_hash === null (nunca ha tenido PIN) Y el usuario
+   * presenta un código de activación válido entregado por su administrador
+   * fuera de banda (Fix seguridad C2 — evita toma de cuenta con solo la cédula).
+   * Aplica rate limiting por IP (Fix #4) y por cuenta (Fix H2).
+   * El código de activación se consume atómicamente al registrar el PIN.
    */
-  async initPin(identificationNumber: string, pin: string, ip: string): Promise<User> {
+  async initPin(
+    identificationNumber: string,
+    pin: string,
+    ip: string,
+    activationCode: string,
+  ): Promise<User> {
     this.validatePinFormat(pin);
 
-    const allowed = await this.rateLimiter.checkLimit(ip);
+    const allowed = await this.rateLimiter.checkLimit(ip, identificationNumber);
     if (!allowed) {
       throw new UnauthorizedException(
         'Demasiados intentos fallidos. Intente nuevamente en 15 minutos.',
@@ -147,12 +155,33 @@ export class PinService {
       );
     }
 
+    if (
+      !isActivationCodeValid(
+        user.activation_code_hash,
+        user.activation_expires_at,
+        activationCode,
+      )
+    ) {
+      throw new UnauthorizedException(
+        'Código de activación inválido o expirado. Solicita uno nuevo a tu administrador.',
+      );
+    }
+
     const pin_hash = await bcrypt.hash(pin, BCRYPT_ROUNDS);
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id: user.id },
-      data: { pin_hash, pin_enabled: true },
+      // Consume el código de activación en la misma operación (un solo uso).
+      data: {
+        pin_hash,
+        pin_enabled: true,
+        activation_code_hash: null,
+        activation_expires_at: null,
+      },
     });
+
+    await this.rateLimiter.resetLimit(ip, identificationNumber);
+    return updated;
   }
 
   private validatePinFormat(pin: string): void {

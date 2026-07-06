@@ -9,7 +9,11 @@ import { HttpExceptionFilter } from '../../src/common/filters/http-exception.fil
 import { ResponseTransformInterceptor } from '../../src/common/interceptors/response-transform.interceptor';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { truncateAll } from '../helpers/db-cleanup';
-import { createTestOrg, createTestUser } from '../helpers/factories';
+import {
+  createTestOrg,
+  createTestUser,
+  setTestActivationCode,
+} from '../helpers/factories';
 
 let app: INestApplication;
 let prisma: PrismaService;
@@ -49,12 +53,14 @@ describe('POST /api/auth/pin/init', () => {
     const user = await createTestUser(prisma, org.id, {
       identification_number: 'USER-NPIN-001',
     });
+    const activationCode = await setTestActivationCode(prisma, user.id);
 
     const res = await request(app.getHttpServer())
       .post('/api/auth/pin/init')
       .send({
         identification_number: user.identification_number,
         pin: '123456',
+        activation_code: activationCode,
       })
       .expect(201);
 
@@ -62,21 +68,49 @@ describe('POST /api/auth/pin/init', () => {
     expect(res.body.data.access_token).toBeDefined();
   });
 
+  it('should return 401 without a valid activation code (Fix C2)', async () => {
+    const org = await createTestOrg(prisma);
+    const user = await createTestUser(prisma, org.id, {
+      identification_number: 'USER-NOCODE-001',
+    });
+    await setTestActivationCode(prisma, user.id);
+
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/pin/init')
+      .send({
+        identification_number: user.identification_number,
+        pin: '123456',
+        activation_code: 'wrong-code',
+      })
+      .expect(401);
+
+    expect(res.body.success).toBe(false);
+  });
+
   it('should return 409 if user already has a PIN configured', async () => {
     const org = await createTestOrg(prisma);
     const user = await createTestUser(prisma, org.id, {
       identification_number: 'USER-HAS-PIN',
     });
+    const activationCode = await setTestActivationCode(prisma, user.id);
 
     // Init por primera vez
     await request(app.getHttpServer())
       .post('/api/auth/pin/init')
-      .send({ identification_number: user.identification_number, pin: '1234' });
+      .send({
+        identification_number: user.identification_number,
+        pin: '1234',
+        activation_code: activationCode,
+      });
 
-    // Segundo intento debe fallar
+    // Segundo intento debe fallar (ya tiene PIN)
     const res = await request(app.getHttpServer())
       .post('/api/auth/pin/init')
-      .send({ identification_number: user.identification_number, pin: '5678' })
+      .send({
+        identification_number: user.identification_number,
+        pin: '5678',
+        activation_code: activationCode,
+      })
       .expect(409);
 
     expect(res.body.success).toBe(false);
@@ -91,9 +125,14 @@ describe('POST /api/auth/pin/verify', () => {
     });
 
     // Configurar PIN primero
+    const activationCode = await setTestActivationCode(prisma, user.id);
     await request(app.getHttpServer())
       .post('/api/auth/pin/init')
-      .send({ identification_number: user.identification_number, pin: '4321' });
+      .send({
+        identification_number: user.identification_number,
+        pin: '4321',
+        activation_code: activationCode,
+      });
 
     const res = await request(app.getHttpServer())
       .post('/api/auth/pin/verify')
@@ -114,9 +153,14 @@ describe('POST /api/auth/pin/verify', () => {
     });
 
     // Configurar PIN primero
+    const activationCode = await setTestActivationCode(prisma, user.id);
     await request(app.getHttpServer())
       .post('/api/auth/pin/init')
-      .send({ identification_number: user.identification_number, pin: '9999' });
+      .send({
+        identification_number: user.identification_number,
+        pin: '9999',
+        activation_code: activationCode,
+      });
 
     const res = await request(app.getHttpServer())
       .post('/api/auth/pin/verify')
@@ -159,12 +203,16 @@ describe('POST /api/auth/pin/status', () => {
     expect(res.body.data.pinConfigured).toBe(false);
   });
 
-  it('should return 404 for unknown identification_number', async () => {
+  it('should return generic false/false for unknown identification_number (anti-enumeración)', async () => {
+    // Fix #6/H3: no revelar si la cédula existe. Un usuario desconocido recibe
+    // la misma respuesta genérica que uno sin PIN, nunca un 404.
     const res = await request(app.getHttpServer())
       .post('/api/auth/pin/status')
       .send({ identification_number: 'NONEXISTENT-99999' })
-      .expect(404);
+      .expect(201);
 
-    expect(res.body.success).toBe(false);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.pinEnabled).toBe(false);
+    expect(res.body.data.pinConfigured).toBe(false);
   });
 });

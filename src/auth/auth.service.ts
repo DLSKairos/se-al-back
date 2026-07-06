@@ -21,8 +21,14 @@ export class AuthService {
     identificationNumber: string,
     pin: string,
     ip: string,
+    activationCode: string,
   ): Promise<{ access_token: string; user: UserPublic }> {
-    const user = await this.pinService.initPin(identificationNumber, pin, ip);
+    const user = await this.pinService.initPin(
+      identificationNumber,
+      pin,
+      ip,
+      activationCode,
+    );
     const access_token = await this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };
   }
@@ -54,10 +60,12 @@ export class AuthService {
   async registerWebAuthnAndLogin(
     identificationNumber: string,
     webauthnResponse: RegistrationResponseJSON,
+    activationCode: string,
   ): Promise<{ access_token: string; user: UserPublic }> {
     const user = await this.webAuthnService.verifyRegistrationByIdentification(
       identificationNumber,
       webauthnResponse,
+      activationCode,
     );
     const access_token = await this.generateJwt(user);
     return { access_token, user: this.toPublic(user) };

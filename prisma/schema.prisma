@@ -95,6 +95,10 @@ model User {
   oauth_refresh_token   String?        @db.Text
   last_oauth_sync       DateTime?
   position_id           String?
+  // Fix seguridad C2: token de activación fuera de banda para el PRIMER acceso
+  // (creación de PIN / registro biométrico). Se guarda solo el hash SHA-256.
+  activation_code_hash  String?
+  activation_expires_at DateTime?
   created_at            DateTime       @default(now())
 
   org                  Organization         @relation(fields: [org_id], references: [id])

@@ -48,8 +48,10 @@ const notificationsService = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const NOW = new Date('2026-06-10T12:00:00.000Z');
-const FUTURE_72H = new Date(NOW.getTime() + 72 * 60 * 60 * 1000);
-const PAST = new Date(NOW.getTime() - 60 * 60 * 1000);
+// Anclados al reloj real para que la comparación del servicio contra new Date()
+// sea determinista sin importar la fecha en que se corran los tests.
+const FUTURE_72H = new Date(Date.now() + 72 * 60 * 60 * 1000);
+const PAST = new Date(Date.now() - 60 * 60 * 1000);
 
 const superAdmin = {
   id: 'super-1',

@@ -18,8 +18,17 @@ import type {
 import { User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { isActivationCodeValid } from '../../common/utils/token.util';
 
 const CHALLENGE_TTL_SECONDS = 300; // 5 minutos
+
+/**
+ * Mensaje genérico para el flujo público de registro inicial. Fix seguridad H3:
+ * no distinguir entre "usuario no existe", "ya tiene credenciales" o "código
+ * inválido" para evitar enumeración de cédulas.
+ */
+const GENERIC_ENROLL_ERROR =
+  'No se pudo iniciar el registro biométrico. Verifica tu código de activación.';
 
 @Injectable()
 export class WebAuthnService {
@@ -127,18 +136,29 @@ export class WebAuthnService {
 
   // ─── Registro inicial (público, sin JWT) ───────────────────────────────────
 
-  async generateRegistrationOptionsByIdentification(identificationNumber: string) {
+  async generateRegistrationOptionsByIdentification(
+    identificationNumber: string,
+    activationCode: string,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { identification_number: identificationNumber },
       include: { webauthn_credentials: true },
     });
 
-    if (!user || !user.is_active) {
-      throw new NotFoundException('Usuario no encontrado o inactivo');
-    }
-
-    if (user.webauthn_credentials.length > 0) {
-      throw new BadRequestException('El usuario ya tiene credenciales biométricas registradas');
+    // Fix C2 + H3: exige código de activación válido y respuesta genérica.
+    // Todas las condiciones de fallo colapsan al mismo error para no filtrar
+    // si la cédula existe o si ya tiene credenciales.
+    if (
+      !user ||
+      !user.is_active ||
+      user.webauthn_credentials.length > 0 ||
+      !isActivationCodeValid(
+        user.activation_code_hash,
+        user.activation_expires_at,
+        activationCode,
+      )
+    ) {
+      throw new UnauthorizedException(GENERIC_ENROLL_ERROR);
     }
 
     const options = await generateRegistrationOptions({
@@ -167,18 +187,25 @@ export class WebAuthnService {
   async verifyRegistrationByIdentification(
     identificationNumber: string,
     response: RegistrationResponseJSON,
+    activationCode: string,
   ): Promise<User> {
     const user = await this.prisma.user.findUnique({
       where: { identification_number: identificationNumber },
       include: { webauthn_credentials: true },
     });
 
-    if (!user || !user.is_active) {
-      throw new UnauthorizedException('Usuario no encontrado o inactivo');
-    }
-
-    if (user.webauthn_credentials.length > 0) {
-      throw new BadRequestException('El usuario ya tiene credenciales biométricas registradas');
+    // Fix C2 + H3: revalidar código de activación y respuesta genérica.
+    if (
+      !user ||
+      !user.is_active ||
+      user.webauthn_credentials.length > 0 ||
+      !isActivationCodeValid(
+        user.activation_code_hash,
+        user.activation_expires_at,
+        activationCode,
+      )
+    ) {
+      throw new UnauthorizedException(GENERIC_ENROLL_ERROR);
     }
 
     const storedChallenge = await this.redis.get(
@@ -210,15 +237,23 @@ export class WebAuthnService {
     const { credential, credentialDeviceType, credentialBackedUp } =
       verification.registrationInfo;
 
-    await this.prisma.webAuthnCredential.create({
-      data: {
-        user_id: user.id,
-        credential_id: credential.id,
-        public_key: Buffer.from(credential.publicKey as Uint8Array).toString('base64'),
-        sign_count: credential.counter,
-        authenticator_type: `${credentialDeviceType}${credentialBackedUp ? ':backed_up' : ''}`,
-      },
-    });
+    // Registrar la credencial y consumir el código de activación de forma
+    // atómica (un solo uso — Fix C2).
+    await this.prisma.$transaction([
+      this.prisma.webAuthnCredential.create({
+        data: {
+          user_id: user.id,
+          credential_id: credential.id,
+          public_key: Buffer.from(credential.publicKey as Uint8Array).toString('base64'),
+          sign_count: credential.counter,
+          authenticator_type: `${credentialDeviceType}${credentialBackedUp ? ':backed_up' : ''}`,
+        },
+      }),
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { activation_code_hash: null, activation_expires_at: null },
+      }),
+    ]);
 
     await this.redis.del(`webauthn:challenge:${user.id}`);
 
@@ -233,13 +268,11 @@ export class WebAuthnService {
       include: { webauthn_credentials: true },
     });
 
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
-
-    if (user.webauthn_credentials.length === 0) {
-      throw new BadRequestException(
-        'El usuario no tiene credenciales WebAuthn registradas',
+    // Fix H3: respuesta unificada para no revelar si la cédula existe o si
+    // tiene credenciales registradas.
+    if (!user || !user.is_active || user.webauthn_credentials.length === 0) {
+      throw new UnauthorizedException(
+        'No se pudo iniciar la autenticación biométrica.',
       );
     }
 

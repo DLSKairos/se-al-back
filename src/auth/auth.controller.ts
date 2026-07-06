@@ -12,6 +12,7 @@ import { JwtPayload } from './dto/jwt-payload.dto';
 import { PinStatusDto } from './dto/pin-status.dto';
 import { PinSetDto } from './dto/pin-set.dto';
 import { PinVerifyDto } from './dto/pin-verify.dto';
+import { PinInitDto } from './dto/pin-init.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -57,8 +58,13 @@ export class AuthController {
    */
   @Public()
   @Post('pin/init')
-  pinInit(@Body() dto: PinVerifyDto, @Req() req: Request) {
-    return this.authService.initPinAndLogin(dto.identification_number, dto.pin, this.extractIp(req));
+  pinInit(@Body() dto: PinInitDto, @Req() req: Request) {
+    return this.authService.initPinAndLogin(
+      dto.identification_number,
+      dto.pin,
+      this.extractIp(req),
+      dto.activation_code,
+    );
   }
 
   /**
@@ -118,21 +124,31 @@ export class AuthController {
   @Post('webauthn/register-init/begin')
   webAuthnRegisterInitBegin(
     @Body('identification_number') identificationNumber: string,
+    @Body('activation_code') activationCode: string,
   ) {
-    return this.webAuthnService.generateRegistrationOptionsByIdentification(identificationNumber);
+    return this.webAuthnService.generateRegistrationOptionsByIdentification(
+      identificationNumber,
+      activationCode,
+    );
   }
 
   /**
    * Verifica el registro biométrico inicial y devuelve access_token.
    * Combina el registro con el login en un solo paso.
+   * Exige el código de activación de primer acceso (Fix C2).
    */
   @Public()
   @Post('webauthn/register-init/finish')
   webAuthnRegisterInitFinish(
     @Body('identification_number') identificationNumber: string,
     @Body('attestationResponse') attestationResponse: Record<string, unknown>,
+    @Body('activation_code') activationCode: string,
   ) {
-    return this.authService.registerWebAuthnAndLogin(identificationNumber, attestationResponse as any);
+    return this.authService.registerWebAuthnAndLogin(
+      identificationNumber,
+      attestationResponse as any,
+      activationCode,
+    );
   }
 
   /**

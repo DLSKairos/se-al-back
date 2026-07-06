@@ -55,7 +55,7 @@ export class UsersController {
   @UseGuards(PlanLimitsGuard)
   @PlanLimitResource('users')
   create(@Body() dto: CreateUserDto, @CurrentUser() user: JwtPayload) {
-    return this.usersService.create(user.orgId, dto);
+    return this.usersService.create(user.orgId, dto, user.role);
   }
 
   /**
@@ -68,6 +68,20 @@ export class UsersController {
       throw new ForbiddenException('No tienes permiso para ver este usuario');
     }
     return this.usersService.findOne(id, user.orgId);
+  }
+
+  /**
+   * (Re)genera el código de activación de primer acceso de un usuario y lo
+   * devuelve en claro UNA sola vez (Fix seguridad C2). Solo ADMIN.
+   * El admin comparte este código con el trabajador por un canal fuera de banda.
+   */
+  @Roles('ADMIN')
+  @Post(':id/activation-code')
+  issueActivationCode(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.usersService.issueActivationCode(id, user.orgId);
   }
 
   /**
@@ -109,7 +123,7 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.usersService.update(id, user.orgId, dto);
+    return this.usersService.update(id, user.orgId, dto, user.role);
   }
 
   /**

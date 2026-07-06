@@ -85,8 +85,8 @@ describe('CreateUserDto', () => {
     expect(errors.some((e) => e.property === 'role')).toBe(true);
   });
 
-  it('should pass for each valid UserRole', async () => {
-    for (const role of Object.values(UserRole)) {
+  it('should pass for each assignable UserRole (OPERATOR, ADMIN)', async () => {
+    for (const role of [UserRole.OPERATOR, UserRole.ADMIN]) {
       const errors = await validateDto({
         name: 'Juan',
         identification_number: '123',
@@ -94,6 +94,15 @@ describe('CreateUserDto', () => {
       });
       expect(errors.some((e) => e.property === 'role')).toBe(false);
     }
+  });
+
+  it('should reject SUPER_ADMIN as a role (Fix seguridad C1)', async () => {
+    const errors = await validateDto({
+      name: 'Juan',
+      identification_number: '123',
+      role: UserRole.SUPER_ADMIN,
+    });
+    expect(errors.some((e) => e.property === 'role')).toBe(true);
   });
 
   it('should fail when pin_enabled is a string instead of boolean', async () => {

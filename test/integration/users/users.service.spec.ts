@@ -3,12 +3,25 @@ dotenv.config({ path: '.env.test' });
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../../src/prisma/prisma.service';
+import { RedisService } from '../../../src/redis/redis.service';
 import { UsersService } from '../../../src/users/users.service';
 import { truncateAll } from '../../helpers/db-cleanup';
 import { createTestOrg, createTestUser } from '../../helpers/factories';
 import { UserRole } from '@prisma/client';
+
+const redisServiceMock = {
+  get: jest.fn().mockResolvedValue(null),
+  set: jest.fn().mockResolvedValue(undefined),
+  del: jest.fn().mockResolvedValue(undefined),
+  incr: jest.fn().mockResolvedValue(1),
+  expire: jest.fn().mockResolvedValue(undefined),
+};
 
 let testingModule: TestingModule;
 let service: UsersService;
@@ -19,7 +32,11 @@ beforeAll(async () => {
     imports: [
       ConfigModule.forRoot({ envFilePath: '.env.test', isGlobal: true }),
     ],
-    providers: [UsersService, PrismaService],
+    providers: [
+      UsersService,
+      PrismaService,
+      { provide: RedisService, useValue: redisServiceMock },
+    ],
   }).compile();
 
   await testingModule.init();
@@ -43,7 +60,7 @@ describe('UsersService — integration', () => {
       const user = await service.create(org.id, {
         name: 'Juan Pérez',
         identification_number: 'ID-001',
-      });
+      }, UserRole.ADMIN);
 
       expect(user.org_id).toBe(org.id);
       expect(user.name).toBe('Juan Pérez');
@@ -56,7 +73,7 @@ describe('UsersService — integration', () => {
       const user = await service.create(org.id, {
         name: 'Operador Default',
         identification_number: 'ID-002',
-      });
+      }, UserRole.ADMIN);
 
       expect(user.role).toBe(UserRole.OPERATOR);
     });
@@ -67,14 +84,76 @@ describe('UsersService — integration', () => {
       await service.create(org.id, {
         name: 'Primer Usuario',
         identification_number: 'ID-DUP',
-      });
+      }, UserRole.ADMIN);
 
       await expect(
         service.create(org.id, {
           name: 'Segundo Usuario',
           identification_number: 'ID-DUP',
-        }),
+        }, UserRole.ADMIN),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('should forbid an ADMIN from creating another ADMIN (Fix C1)', async () => {
+      const org = await createTestOrg(prisma);
+
+      await expect(
+        service.create(org.id, {
+          name: 'Nuevo Admin',
+          identification_number: 'ID-ADM',
+          role: UserRole.ADMIN,
+        }, UserRole.ADMIN),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should allow a SUPER_ADMIN to create an ADMIN (Fix C1)', async () => {
+      const org = await createTestOrg(prisma);
+
+      const admin = await service.create(org.id, {
+        name: 'Nuevo Admin',
+        identification_number: 'ID-ADM2',
+        role: UserRole.ADMIN,
+      }, UserRole.SUPER_ADMIN);
+
+      expect(admin.role).toBe(UserRole.ADMIN);
+    });
+  });
+
+  describe('update() — role escalation guard (Fix C1)', () => {
+    it('should forbid an ADMIN from promoting a user to ADMIN', async () => {
+      const org = await createTestOrg(prisma);
+      const target = await createTestUser(prisma, org.id, { name: 'Operario' });
+
+      await expect(
+        service.update(target.id, org.id, { role: UserRole.ADMIN }, UserRole.ADMIN),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should forbid promoting anyone to SUPER_ADMIN even as SUPER_ADMIN', async () => {
+      const org = await createTestOrg(prisma);
+      const target = await createTestUser(prisma, org.id, { name: 'Operario' });
+
+      await expect(
+        service.update(
+          target.id,
+          org.id,
+          { role: UserRole.SUPER_ADMIN },
+          UserRole.SUPER_ADMIN,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should allow a SUPER_ADMIN to promote a user to ADMIN', async () => {
+      const org = await createTestOrg(prisma);
+      const target = await createTestUser(prisma, org.id, { name: 'Operario' });
+
+      const updated = await service.update(
+        target.id,
+        org.id,
+        { role: UserRole.ADMIN },
+        UserRole.SUPER_ADMIN,
+      );
+      expect(updated.role).toBe(UserRole.ADMIN);
     });
   });
 

@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { randomToken } from '../common/utils/token.util';
 
 // NotificationsService — interfaz pactada con el agente de notificaciones.
 // Importamos el tipo pero el módulo se proveerá opcionalmente para evitar
@@ -114,6 +115,7 @@ export class MagicLinkService {
 
     const magicLinkToken = await this.prisma.magicLinkToken.create({
       data: {
+        token: randomToken(), // Fix M3: 256 bits de entropía en vez de CUID
         user_id: targetUserId,
         purpose: MagicLinkPurpose.FIRST_ACCESS_ADMIN,
         expires_at: expiresAt,
@@ -196,6 +198,7 @@ export class MagicLinkService {
 
     const magicLinkToken = await this.prisma.magicLinkToken.create({
       data: {
+        token: randomToken(), // Fix M3: 256 bits de entropía en vez de CUID
         user_id: targetUserId,
         purpose: MagicLinkPurpose.ADMIN_INVITE,
         expires_at: expiresAt,
@@ -375,6 +378,7 @@ export class MagicLinkService {
 
     const newToken = await this.prisma.magicLinkToken.create({
       data: {
+        token: randomToken(), // Fix M3: 256 bits de entropía en vez de CUID
         user_id: existing.user_id,
         purpose: existing.purpose,
         expires_at: expiresAt,

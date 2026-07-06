@@ -57,7 +57,12 @@ export class FormAiService {
       if (!text.trim()) throw new Error('Documento vacío');
       this.logger.debug(`Texto extraído: ${text.length} chars`);
 
-      const userPrompt = EXTRACT_USER_PROMPT.replace('{TEXTO_DEL_DOCUMENTO}', text.slice(0, 15000));
+      // Fix L2: neutralizar intentos del documento de cerrar el bloque de datos
+      // e inyectar instrucciones fuera de los delimitadores.
+      const sanitized = text
+        .slice(0, 15000)
+        .replace(/<<<\s*DOCUMENTO_(INICIO|FIN)\s*>>>/gi, '[marca removida]');
+      const userPrompt = EXTRACT_USER_PROMPT.replace('{TEXTO_DEL_DOCUMENTO}', sanitized);
 
       this.logger.debug('Llamando a Claude para extracción...');
       const response = await this.anthropic.messages.create({

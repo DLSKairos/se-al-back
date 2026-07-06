@@ -7,6 +7,29 @@ import {
   type FormTemplate,
 } from '@prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { hashToken } from '../../src/common/utils/token.util';
+
+/** Código de activación fijo para tests de primer acceso (Fix C2). */
+export const TEST_ACTIVATION_CODE = 'test-activation-code-000000';
+
+/**
+ * Asigna un código de activación de primer acceso a un usuario de test y
+ * devuelve el código en claro para usarlo en /auth/pin/init o register-init.
+ */
+export async function setTestActivationCode(
+  prisma: PrismaService,
+  userId: string,
+  code: string = TEST_ACTIVATION_CODE,
+): Promise<string> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      activation_code_hash: hashToken(code),
+      activation_expires_at: new Date(Date.now() + 60 * 60 * 1000),
+    },
+  });
+  return code;
+}
 
 // ─── Organization ─────────────────────────────────────────────────────────────
 // Campos obligatorios: name (unique). created_at tiene default.

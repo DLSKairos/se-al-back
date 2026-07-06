@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FileStorageService } from './file-storage.service';
+import { validateMagicBytes } from '../common/utils/magic-bytes.util';
 import { CreateSesionDto } from './dto/create-sesion.dto';
 import { UpdateSesionDto } from './dto/update-sesion.dto';
 import { CreateItemDto } from './dto/create-item.dto';
@@ -221,6 +222,11 @@ export class InventariosService {
     if (itemId) {
       await this._verificarItem(sessionId, itemId);
     }
+
+    // Fix M5: validar los magic bytes reales del archivo (no confiar en el
+    // Content-Type declarado por el cliente) antes de subir a Cloudinary.
+    // Evita almacenar contenido no-imagen (p. ej. SVG/HTML con scripts).
+    validateMagicBytes(file.buffer, file.mimetype);
 
     const url = await this.fileStorage.upload(
       file.buffer,
