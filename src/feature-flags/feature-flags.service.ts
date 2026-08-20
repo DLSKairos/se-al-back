@@ -34,8 +34,6 @@ const REDIS_PREFIX = 'feature:';
  * - Un setInterval refresca el cache cada 30s en segundo plano.
  * - isEnabled() usa el cache si la entrada no ha expirado; si expiró, lee Redis
  *   puntualmente y actualiza el cache.
- * - isEnabledSync() solo lee el Map local (para contextos no async); devuelve
- *   false si la entrada no existe (comportamiento conservador).
  *
  * Regla de ausencia: clave no existente en Redis → flag = off (false).
  * Valores que activan el flag: "on" | "true" | "1".
@@ -81,16 +79,6 @@ export class FeatureFlagsService implements OnModuleInit, OnModuleDestroy {
     const value = this.parseValue(raw);
     this.setCache(flag, value);
     return value;
-  }
-
-  /**
-   * Equivalente síncrono usando solo el cache local.
-   * Si la entrada no existe o expiró → retorna false (conservador).
-   */
-  isEnabledSync(flag: string): boolean {
-    const entry = this.cache.get(flag);
-    if (!entry || entry.expiresAt <= Date.now()) return false;
-    return entry.value;
   }
 
   /**

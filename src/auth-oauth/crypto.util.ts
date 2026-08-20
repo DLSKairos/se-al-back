@@ -58,11 +58,3 @@ export function decrypt(ciphertext: string, keyHex: string): string {
   const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
   return decrypted.toString('utf8');
 }
-
-/**
- * Genera N bytes criptográficamente seguros en formato hexadecimal.
- * Usado para code_verifier y state de PKCE.
- */
-export function randomHex(bytes: number): string {
-  return randomBytes(bytes).toString('hex');
-}

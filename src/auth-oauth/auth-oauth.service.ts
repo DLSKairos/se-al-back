@@ -17,7 +17,8 @@ import { RedisService } from '../redis/redis.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { MagicLinkService } from '../magic-link/magic-link.service';
 import { AuthService } from '../auth/auth.service';
-import { encrypt, randomHex } from './crypto.util';
+import { randomToken } from '../common/utils/token.util';
+import { encrypt } from './crypto.util';
 
 const STATE_TTL_SECONDS = 600; // 10 minutos
 
@@ -145,7 +146,7 @@ export class AuthOAuthService {
 
   private generateCodeVerifier(): string {
     // RFC 7636: 43-128 caracteres URL-safe
-    return randomHex(32); // 64 chars hex — válido
+    return randomToken(32); // 64 chars hex — válido
   }
 
   private generateCodeChallenge(verifier: string): string {
@@ -160,7 +161,7 @@ export class AuthOAuthService {
     await this.checkGoogleFlag();
     const config = await this.getGoogleConfig();
 
-    const state = randomHex(16);
+    const state = randomToken(16);
     const codeVerifier = this.generateCodeVerifier();
     const codeChallenge = this.generateCodeChallenge(codeVerifier);
 
@@ -194,7 +195,7 @@ export class AuthOAuthService {
     await this.checkMicrosoftFlag();
     const config = await this.getMicrosoftConfig();
 
-    const state = randomHex(16);
+    const state = randomToken(16);
     const codeVerifier = this.generateCodeVerifier();
     const codeChallenge = this.generateCodeChallenge(codeVerifier);
 

@@ -1,4 +1,4 @@
-import { decrypt, encrypt, randomHex } from './crypto.util';
+import { decrypt, encrypt } from './crypto.util';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FIXTURE
@@ -170,29 +170,5 @@ describe('crypto.util — encrypt / decrypt', () => {
       const ciphertext = encrypt('test', TEST_KEY_HEX);
       expect(() => decrypt(ciphertext, 'short')).toThrow(/32 bytes/);
     });
-  });
-});
-
-// ───────────────────────────────────────────────────────────────────────────────
-// randomHex
-// ───────────────────────────────────────────────────────────────────────────────
-
-describe('crypto.util — randomHex', () => {
-  it('should return a hex string of length 2 * bytes', () => {
-    const hex = randomHex(16);
-    expect(hex).toHaveLength(32);
-    expect(hex).toMatch(/^[0-9a-f]+$/);
-  });
-
-  it('should return different values on each call', () => {
-    const hex1 = randomHex(16);
-    const hex2 = randomHex(16);
-    expect(hex1).not.toBe(hex2);
-  });
-
-  it('should handle small byte counts (1 byte = 2 hex chars)', () => {
-    const hex = randomHex(1);
-    expect(hex).toHaveLength(2);
-    expect(hex).toMatch(/^[0-9a-f]{2}$/);
   });
 });

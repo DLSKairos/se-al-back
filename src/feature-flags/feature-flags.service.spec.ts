@@ -135,29 +135,6 @@ describe('FeatureFlagsService', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // isEnabledSync
-  // ───────────────────────────────────────────────────────────────────────────
-
-  describe('isEnabledSync', () => {
-    it('should return false for unknown flag (not in cache)', () => {
-      const result = service.isEnabledSync('totally_unknown_flag');
-      expect(result).toBe(false);
-    });
-
-    it('should return true after setFlag(true)', async () => {
-      await service.setFlag('magic_link', true);
-      expect(service.isEnabledSync('magic_link')).toBe(true);
-    });
-
-    it('should return false after setFlag(false)', async () => {
-      await service.setFlag('oauth_google', true);
-      await service.setFlag('oauth_google', false);
-
-      expect(service.isEnabledSync('oauth_google')).toBe(false);
-    });
-  });
-
-  // ───────────────────────────────────────────────────────────────────────────
   // setFlag
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -176,10 +153,10 @@ describe('FeatureFlagsService', () => {
 
     it('should update in-memory cache immediately', async () => {
       await service.setFlag('oauth_google', true);
-      expect(service.isEnabledSync('oauth_google')).toBe(true);
+      expect(await service.isEnabled('oauth_google')).toBe(true);
 
       await service.setFlag('oauth_google', false);
-      expect(service.isEnabledSync('oauth_google')).toBe(false);
+      expect(await service.isEnabled('oauth_google')).toBe(false);
     });
   });
 
@@ -201,7 +178,7 @@ describe('FeatureFlagsService', () => {
 
     it('should update in-memory cache with fresh values from Redis', async () => {
       // Primer refresh: todos null
-      expect(service.isEnabledSync('oauth_google')).toBe(false);
+      expect(await service.isEnabled('oauth_google')).toBe(false);
 
       // Segundo refresh con oauth_google = 'on'
       const freshValues = KNOWN_FLAGS.map((f) =>
@@ -211,7 +188,7 @@ describe('FeatureFlagsService', () => {
 
       await service.refreshCache();
 
-      expect(service.isEnabledSync('oauth_google')).toBe(true);
+      expect(await service.isEnabled('oauth_google')).toBe(true);
     });
   });
 
