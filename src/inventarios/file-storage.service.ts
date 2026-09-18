@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   CloudinaryFileStorageService,
   CloudinaryResourceType,
@@ -11,4 +12,8 @@ import {
 export class FileStorageService extends CloudinaryFileStorageService {
   protected readonly folder = 'senal/inventarios';
   protected readonly resourceType: CloudinaryResourceType = 'auto';
+
+  constructor(config: ConfigService) {
+    super(config);
+  }
 }
