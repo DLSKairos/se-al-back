@@ -13,6 +13,7 @@ import { MailService } from '../mail/mail.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { randomToken } from '../common/utils/token.util';
+import { LIST_LIMITS } from '../common/list-limits';
 
 // NotificationsService — interfaz pactada con el agente de notificaciones.
 // Importamos el tipo pero el módulo se proveerá opcionalmente para evitar
@@ -438,6 +439,7 @@ export class MagicLinkService {
         },
       },
       orderBy: { created_at: 'desc' },
+      take: LIST_LIMITS.RECENT,
     });
   }
 }

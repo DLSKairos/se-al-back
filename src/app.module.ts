@@ -1,8 +1,11 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { AppThrottlerGuard } from './common/throttler/app-throttler.guard';
+import { RedisThrottlerStorage } from './common/throttler/redis-throttler.storage';
+import { RedisService } from './redis/redis.service';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -42,7 +45,7 @@ import { StatusModule } from './status/status.module';
   providers: [
     // S-02: ThrottlerGuard PRIMERO (rate limit antes de validar JWT para limitar
     // ataques de fuerza bruta sin consumir recursos de autenticación)
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: AppThrottlerGuard },
     // Guards globales: JwtAuthGuard primero (autentica), RolesGuard segundo (autoriza)
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
@@ -54,9 +57,22 @@ import { StatusModule } from './status/status.module';
       envFilePath: '.env',
     }),
 
-    // S-02: Rate limiting global — 30 requests / 60s por IP
-    // Los endpoints públicos sensibles sobrescriben este límite con @Throttle
-    ThrottlerModule.forRoot([{ name: 'short', ttl: 60_000, limit: 30 }]),
+    // S-02: Rate limiting global, por usuario autenticado (o IP si no hay sesión),
+    // con contadores en Redis compartidos entre instancias.
+    // Los endpoints públicos sensibles sobrescriben este límite con @Throttle.
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService, RedisService],
+      useFactory: (config: ConfigService, redis: RedisService) => ({
+        throttlers: [
+          {
+            name: 'short',
+            ttl: 60_000,
+            limit: Number(config.get('THROTTLE_LIMIT', 120)),
+          },
+        ],
+        storage: new RedisThrottlerStorage(redis),
+      }),
+    }),
 
     // Cron jobs
     ScheduleModule.forRoot(),

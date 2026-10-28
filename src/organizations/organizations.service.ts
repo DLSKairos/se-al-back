@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { LIST_LIMITS } from '../common/list-limits';
 
 @Injectable()
 export class OrganizationsService {
@@ -15,6 +16,7 @@ export class OrganizationsService {
     return this.prisma.organization.findMany({
       orderBy: { created_at: 'desc' },
       select: { id: true, name: true, created_at: true },
+      take: LIST_LIMITS.CATALOG,
     });
   }
 

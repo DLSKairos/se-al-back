@@ -7,6 +7,8 @@ import { SubmissionStatus } from '@prisma/client';
 import { PrismaService } from '../../../src/prisma/prisma.service';
 import { FormSubmissionsService } from '../../../src/form-submissions/form-submissions.service';
 import { FormValidityService } from '../../../src/form-submissions/form-validity.service';
+import { FormApprovalService } from '../../../src/form-approval/form-approval.service';
+import { NotificationsService } from '../../../src/notifications/notifications.service';
 import { FormNotificationsService } from '../../../src/form-notifications/form-notifications.service';
 import { truncateAll } from '../../helpers/db-cleanup';
 import {
@@ -22,6 +24,9 @@ const formNotificationsMock = {
   dispatchOnSubmit: jest.fn().mockResolvedValue(undefined),
 };
 
+// Mock de NotificationsService: FormApprovalService solo usa create()
+const notificationsMock = { create: jest.fn().mockResolvedValue(undefined) };
+
 let testingModule: TestingModule;
 let service: FormSubmissionsService;
 let prisma: PrismaService;
@@ -34,7 +39,9 @@ beforeAll(async () => {
     providers: [
       FormSubmissionsService,
       FormValidityService,
+      FormApprovalService,
       PrismaService,
+      { provide: NotificationsService, useValue: notificationsMock },
       { provide: FormNotificationsService, useValue: formNotificationsMock },
     ],
   }).compile();
@@ -189,10 +196,22 @@ describe('FormSubmissionsService — integration', () => {
         fields[0].id,
       );
 
+      // La aprobación manual está prohibida (es automática) y no debe tocar la BD
+      await expect(
+        service.changeStatus(
+          submission.id,
+          org.id,
+          SubmissionStatus.APPROVED,
+          user.id,
+          'ADMIN',
+        ),
+      ).rejects.toThrow('La aprobación es automática');
+
+      // Otras transiciones sí persisten
       await service.changeStatus(
         submission.id,
         org.id,
-        SubmissionStatus.APPROVED,
+        SubmissionStatus.DRAFT,
         user.id,
         'ADMIN',
       );
@@ -201,7 +220,7 @@ describe('FormSubmissionsService — integration', () => {
         where: { id: submission.id },
       });
 
-      expect(updated?.status).toBe(SubmissionStatus.APPROVED);
+      expect(updated?.status).toBe(SubmissionStatus.DRAFT);
     });
   });
 });

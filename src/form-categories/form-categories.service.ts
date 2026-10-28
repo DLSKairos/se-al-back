@@ -4,18 +4,25 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { CACHE_TTL, cacheKeys } from '../common/cache-keys';
 import { CreateFormCategoryDto } from './dto/create-form-category.dto';
 import { UpdateFormCategoryDto } from './dto/update-form-category.dto';
 
 @Injectable()
 export class FormCategoriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   async findAll(orgId: string) {
-    return this.prisma.formCategory.findMany({
-      where: { org_id: orgId },
-      orderBy: { name: 'asc' },
-    });
+    return this.redis.remember(cacheKeys.categories(orgId), CACHE_TTL.CATALOG, () =>
+      this.prisma.formCategory.findMany({
+        where: { org_id: orgId },
+        orderBy: { name: 'asc' },
+      }),
+    );
   }
 
   async findOne(id: string, orgId: string) {
@@ -41,23 +48,27 @@ export class FormCategoriesService {
       );
     }
 
-    return this.prisma.formCategory.create({
+    const created = await this.prisma.formCategory.create({
       data: {
         org_id: orgId,
         name: dto.name,
       },
     });
+    await this.invalidateCache(orgId);
+    return created;
   }
 
   async update(id: string, orgId: string, dto: UpdateFormCategoryDto) {
     await this.findOne(id, orgId);
 
-    return this.prisma.formCategory.update({
+    const updated = await this.prisma.formCategory.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
       },
     });
+    await this.invalidateCache(orgId);
+    return updated;
   }
 
   async remove(id: string, orgId: string): Promise<void> {
@@ -74,5 +85,11 @@ export class FormCategoriesService {
     }
 
     await this.prisma.formCategory.delete({ where: { id } });
+    await this.invalidateCache(orgId);
+  }
+
+  /** La categoría viaja embebida en las plantillas activas: se invalidan ambas cachés. */
+  private invalidateCache(orgId: string): Promise<void> {
+    return this.redis.safeDel(cacheKeys.categories(orgId), cacheKeys.activeTemplates(orgId));
   }
 }

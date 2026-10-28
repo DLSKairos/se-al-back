@@ -1,12 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { cacheKeys } from '../common/cache-keys';
 import { ensureUniqueKeys } from '../common/utils/form-keys.util';
 import { CreateFormBlueprintDto } from './dto/create-form-blueprint.dto';
 import { QueryFormBlueprintsDto } from './dto/query-form-blueprints.dto';
 
 @Injectable()
 export class FormBlueprintsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   // ─── Consultas ─────────────────────────────────────────────────────────────
 
@@ -47,7 +52,7 @@ export class FormBlueprintsService {
     const rawFields = Array.isArray(blueprint.fields) ? (blueprint.fields as any[]) : [];
     const uniqueFields = ensureUniqueKeys(rawFields);
 
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       // Creación/búsqueda de categoría dentro de la transacción (Fix #19)
       let category = await tx.formCategory.findFirst({
         where: { org_id: orgId, name: blueprint.category },
@@ -95,5 +100,7 @@ export class FormBlueprintsService {
         },
       });
     });
+    await this.redis.safeDel(cacheKeys.categories(orgId), cacheKeys.activeTemplates(orgId));
+    return created;
   }
 }

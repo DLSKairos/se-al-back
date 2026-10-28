@@ -7,6 +7,7 @@ import {
 import { MasterEntityType, NotificationType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { cacheKeys } from '../common/cache-keys';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateMasterItemDto } from './dto/create-master-item.dto';
 import { CreateSuggestionDto } from './dto/create-suggestion.dto';
@@ -359,6 +360,14 @@ export class MasterListsService {
     orgId: string,
   ) {
     await this.redis.del(`master:${type}:${orgId}`);
+    if (type === 'departments') {
+      // DepartmentsService y WorkLocations cachean los mismos departamentos
+      await this.redis.safeDel(
+        cacheKeys.departments(orgId),
+        cacheKeys.locationsActive(orgId),
+        cacheKeys.locationsAll(orgId),
+      );
+    }
   }
 
   private getTypeLabel(type: MasterEntityType): string {

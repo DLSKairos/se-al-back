@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
@@ -25,8 +26,16 @@ async function bootstrap() {
     ...(httpsOptions ? { httpsOptions } : {}),
   });
 
-  // Confiar en el proxy reverso para req.ip correcto (Fix #5)
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  // Confiar en el proxy reverso para req.ip correcto (Fix #5).
+  // TRUST_PROXY_HOPS = nº de proxies delante de la app (LB + CDN = 2). Si es menor
+  // que el real, todos los clientes aparecen con la IP del proxy.
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
+
+  // Compresión gzip de respuestas (JSON grandes: plantillas, listados)
+  app.use(compression());
 
   app.setGlobalPrefix('api');
 

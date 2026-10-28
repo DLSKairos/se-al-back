@@ -10,6 +10,7 @@ import { CreateSesionDto } from './dto/create-sesion.dto';
 import { UpdateSesionDto } from './dto/update-sesion.dto';
 import { CreateItemDto } from './dto/create-item.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
+import { LIST_LIMITS } from '../common/list-limits';
 
 @Injectable()
 export class InventariosService {
@@ -50,6 +51,7 @@ export class InventariosService {
     const sesiones = await this.prisma.inventarioSession.findMany({
       where: { org_id: orgId },
       orderBy: { created_at: 'desc' },
+      take: LIST_LIMITS.RECENT,
       include: {
         _count: {
           select: {

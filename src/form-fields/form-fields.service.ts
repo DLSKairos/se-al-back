@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { FieldType, Frequency, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { cacheKeys } from '../common/cache-keys';
 import { toSnakeCase } from '../common/utils/slug.util';
 import { CreateFormFieldDto } from './dto/create-form-field.dto';
 import { UpdateFormFieldDto } from './dto/update-form-field.dto';
@@ -12,7 +14,10 @@ import { ReorderFieldsDto } from './dto/reorder-fields.dto';
 
 @Injectable()
 export class FormFieldsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   // ─── Consultas ─────────────────────────────────────────────────────────────
 
@@ -53,7 +58,7 @@ export class FormFieldsService {
 
     const order = dto.order ?? (maxOrder._max.order ?? 0) + 1;
 
-    return this.prisma.formField.create({
+    const created = await this.prisma.formField.create({
       data: {
         template_id: templateId,
         label: dto.label,
@@ -68,6 +73,8 @@ export class FormFieldsService {
           (dto.revalidation_frequency as Frequency) ?? Frequency.INHERIT,
       },
     });
+    await this.invalidateActiveTemplates(orgId);
+    return created;
   }
 
   async update(
@@ -107,7 +114,7 @@ export class FormFieldsService {
       }
     }
 
-    return this.prisma.formField.update({
+    const updated = await this.prisma.formField.update({
       where: { id: fieldId },
       data: {
         ...(dto.label !== undefined && { label: dto.label }),
@@ -125,6 +132,8 @@ export class FormFieldsService {
         }),
       },
     });
+    await this.invalidateActiveTemplates(orgId);
+    return updated;
   }
 
   async remove(
@@ -144,6 +153,7 @@ export class FormFieldsService {
     }
 
     await this.prisma.formField.delete({ where: { id: fieldId } });
+    await this.invalidateActiveTemplates(orgId);
   }
 
   async reorder(
@@ -178,6 +188,12 @@ export class FormFieldsService {
         }),
       ),
     );
+    await this.invalidateActiveTemplates(orgId);
+  }
+
+  /** Las plantillas activas se cachean con sus campos: cualquier cambio de campos las invalida. */
+  private invalidateActiveTemplates(orgId: string): Promise<void> {
+    return this.redis.safeDel(cacheKeys.activeTemplates(orgId));
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────

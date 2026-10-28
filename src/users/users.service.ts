@@ -11,6 +11,7 @@ import { RedisService } from '../redis/redis.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { hashToken, randomToken } from '../common/utils/token.util';
+import { LIST_LIMITS } from '../common/list-limits';
 
 /** Vigencia del código de activación de primer acceso (Fix C2). */
 const ACTIVATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
@@ -76,6 +77,7 @@ export class UsersService {
         // push_subscription excluido: contiene datos del dispositivo (Fix #2)
       },
       orderBy: { name: 'asc' },
+      take: LIST_LIMITS.USERS,
     });
   }
 

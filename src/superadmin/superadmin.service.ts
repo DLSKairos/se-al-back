@@ -10,6 +10,7 @@ import { RedisService } from '../redis/redis.service';
 import { MagicLinkService } from '../magic-link/magic-link.service';
 import { UpdateOrgConfigDto } from './dto/update-org-config.dto';
 import { CreateOrgAdminDto } from './dto/create-org-admin.dto';
+import { LIST_LIMITS } from '../common/list-limits';
 
 /**
  * SuperadminService — parametrización de organizaciones y métricas de uso.
@@ -99,6 +100,7 @@ export class SuperadminService {
         },
       },
       orderBy: { created_at: 'asc' },
+      take: LIST_LIMITS.CATALOG,
     });
 
     // Contar usuarios activos y sedes activas por org en paralelo

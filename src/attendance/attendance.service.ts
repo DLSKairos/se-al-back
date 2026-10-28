@@ -229,7 +229,8 @@ export class AttendanceService {
           user: { select: { id: true, name: true, identification_number: true } },
           work_location: { select: { id: true, name: true } },
         },
-        orderBy: { service_date: 'desc' },
+        // id como desempate: sin él, paginar por offset repite/omite filas con la misma fecha
+        orderBy: [{ service_date: 'desc' }, { id: 'desc' }],
         take: limit,
         skip,
       }),

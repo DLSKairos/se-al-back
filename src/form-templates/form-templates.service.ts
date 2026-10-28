@@ -5,13 +5,24 @@ import {
 } from '@nestjs/common';
 import { FormTemplateStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { CACHE_TTL, cacheKeys } from '../common/cache-keys';
 import { ensureUniqueKeys } from '../common/utils/form-keys.util';
 import { CreateFormTemplateDto } from './dto/create-form-template.dto';
 import { UpdateFormTemplateDto } from './dto/update-form-template.dto';
+import { LIST_LIMITS } from '../common/list-limits';
 
 @Injectable()
 export class FormTemplatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
+
+  /** Invalida la caché de plantillas activas de la org (llamar tras cualquier mutación). */
+  async invalidateCache(orgId: string): Promise<void> {
+    await this.redis.safeDel(cacheKeys.activeTemplates(orgId));
+  }
 
   // ─── Consultas ─────────────────────────────────────────────────────────────
 
@@ -26,14 +37,20 @@ export class FormTemplatesService {
    *   en el array (comparación case-insensitive).
    */
   async findActive(orgId: string, userRole: string, userJobTitle: string) {
-    const templates = await this.prisma.formTemplate.findMany({
-      where: { org_id: orgId, status: FormTemplateStatus.ACTIVE },
-      include: {
-        category: true,
-        fields: { orderBy: { order: 'asc' } },
-      },
-      orderBy: { name: 'asc' },
-    });
+    // Se cachea el listado completo de la org; el filtro por cargo se aplica después
+    const templates = await this.redis.remember(
+      cacheKeys.activeTemplates(orgId),
+      CACHE_TTL.CATALOG,
+      () =>
+        this.prisma.formTemplate.findMany({
+          where: { org_id: orgId, status: FormTemplateStatus.ACTIVE },
+          include: {
+            category: true,
+            fields: { orderBy: { order: 'asc' } },
+          },
+          orderBy: { name: 'asc' },
+        }),
+    );
 
     if (userRole === 'OPERATOR') {
       const normalizedJobTitle = userJobTitle.toLowerCase().trim();
@@ -57,6 +74,7 @@ export class FormTemplatesService {
         _count: { select: { submissions: true } },
       },
       orderBy: { updated_at: 'desc' },
+      take: LIST_LIMITS.CATALOG,
     });
 
     return templates;
@@ -89,7 +107,7 @@ export class FormTemplatesService {
     createdBy: string,
     dto: CreateFormTemplateDto,
   ) {
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const template = await tx.formTemplate.create({
         data: {
           org_id: orgId,
@@ -149,12 +167,14 @@ export class FormTemplatesService {
         },
       });
     });
+    await this.invalidateCache(orgId);
+    return created;
   }
 
   async update(id: string, orgId: string, dto: UpdateFormTemplateDto) {
     await this.assertExists(id, orgId);
 
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       const template = await tx.formTemplate.update({
         where: { id },
         data: {
@@ -251,6 +271,8 @@ export class FormTemplatesService {
         include: { category: true, fields: { orderBy: { order: 'asc' } } },
       });
     });
+    await this.invalidateCache(orgId);
+    return updated;
   }
 
   async changeStatus(
@@ -292,10 +314,12 @@ export class FormTemplatesService {
       }
     }
 
-    return this.prisma.formTemplate.update({
+    const result = await this.prisma.formTemplate.update({
       where: { id },
       data: { status: newStatus },
     });
+    await this.invalidateCache(orgId);
+    return result;
   }
 
   async remove(id: string, orgId: string): Promise<void> {
@@ -308,6 +332,7 @@ export class FormTemplatesService {
     }
 
     await this.prisma.formTemplate.delete({ where: { id } });
+    await this.invalidateCache(orgId);
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────

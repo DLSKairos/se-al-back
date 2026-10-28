@@ -34,9 +34,15 @@ export async function setTestActivationCode(
 // ─── Organization ─────────────────────────────────────────────────────────────
 // Campos obligatorios: name (unique). created_at tiene default.
 
+let uniqCounter = 0;
+/** Sufijo único por llamada: Date.now() solo colisiona si dos factories corren en el mismo ms. */
+function uniq(): string {
+  return `${Date.now()}-${++uniqCounter}`;
+}
+
 export async function createTestOrg(
   prisma: PrismaService,
-  name = `org-${Date.now()}`,
+  name = `org-${uniq()}`,
 ) {
   return prisma.organization.create({
     data: { name },
@@ -50,7 +56,7 @@ export async function createTestOrg(
 export async function createTestDepartment(
   prisma: PrismaService,
   orgId: string,
-  name = `dept-${Date.now()}`,
+  name = `dept-${uniq()}`,
 ) {
   return prisma.department.create({
     data: {
@@ -69,7 +75,7 @@ export async function createTestDepartment(
 export async function createTestWorkLocation(
   prisma: PrismaService,
   orgId: string,
-  name = `loc-${Date.now()}`,
+  name = `loc-${uniq()}`,
 ) {
   return prisma.workLocation.create({
     data: {
@@ -100,7 +106,7 @@ export async function createTestUser(
   orgId: string,
   overrides: CreateUserOverrides = {},
 ) {
-  const ts = Date.now();
+  const ts = uniq();
   return prisma.user.create({
     data: {
       org_id: orgId,
@@ -153,7 +159,7 @@ export async function createTestAttendanceConfig(
 export async function createTestFormCategory(
   prisma: PrismaService,
   orgId: string,
-  name = `cat-${Date.now()}`,
+  name = `cat-${uniq()}`,
 ) {
   return prisma.formCategory.create({
     data: {
@@ -182,7 +188,7 @@ export async function createTestFormWithFields(
   createdBy: string,
   frequency: Frequency = Frequency.ONCE,
 ): Promise<CreateFormWithFieldsResult> {
-  const ts = Date.now();
+  const ts = uniq();
 
   const template = await prisma.formTemplate.create({
     data: {

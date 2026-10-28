@@ -155,14 +155,17 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
     @Res({ passthrough: false }) res: Response,
   ) {
-    const result = await this.attendanceService.findAll(user.orgId, {
-      ...query,
-      limit: 10000, // sin paginación para exportar todo
-    });
+    const filename = `asistencia-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
+    // Streaming: se escribe por páginas de 500 filas, sin cargar todo el reporte en memoria
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const ExcelJS = require('exceljs') as typeof import('exceljs');
-    const workbook = new ExcelJS.Workbook();
+    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
     const sheet = workbook.addWorksheet('Asistencia');
 
     sheet.columns = [
@@ -178,47 +181,55 @@ export class AttendanceController {
       { header: 'Extra Festiva (min)', key: 'extra_holiday', width: 22 },
     ];
 
-    // Estilo de cabecera
-    sheet.getRow(1).font = { bold: true };
-    sheet.getRow(1).fill = {
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = {
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FF1E3A5F' },
     };
-    sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.commit();
 
-    const records: any[] = Array.isArray(result)
-      ? result
-      : (result as any).data ?? [];
+    const toTime = (d: Date | null) =>
+      d ? new Date(d).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' }) : '—';
 
-    for (const r of records) {
-      const toTime = (d: Date | null) =>
-        d ? new Date(d).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' }) : '—';
+    try {
+      const PAGE_SIZE = 500;
+      for (let page = 1; ; page++) {
+        const result = await this.attendanceService.findAll(user.orgId, {
+          ...query,
+          page,
+          limit: PAGE_SIZE,
+        });
+        const records: any[] = Array.isArray(result) ? result : (result as any).data ?? [];
 
-      sheet.addRow({
-        worker: r.user?.name ?? r.user_id,
-        date: r.service_date
-          ? new Date(r.service_date).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })
-          : '—',
-        entry: toTime(r.entry_time),
-        exit: toTime(r.exit_time),
-        location: r.work_location?.name ?? '—',
-        regular: r.regular_minutes ?? 0,
-        extra_day: r.extra_day_minutes ?? 0,
-        extra_night: r.extra_night_minutes ?? 0,
-        extra_sunday: r.extra_sunday_minutes ?? 0,
-        extra_holiday: r.extra_holiday_minutes ?? 0,
-      });
+        for (const r of records) {
+          sheet
+            .addRow({
+              worker: r.user?.name ?? r.user_id,
+              date: r.service_date
+                ? new Date(r.service_date).toLocaleDateString('es-CO', { timeZone: 'America/Bogota' })
+                : '—',
+              entry: toTime(r.entry_time),
+              exit: toTime(r.exit_time),
+              location: r.work_location?.name ?? '—',
+              regular: r.regular_minutes ?? 0,
+              extra_day: r.extra_day_minutes ?? 0,
+              extra_night: r.extra_night_minutes ?? 0,
+              extra_sunday: r.extra_sunday_minutes ?? 0,
+              extra_holiday: r.extra_holiday_minutes ?? 0,
+            })
+            .commit();
+        }
+
+        if (records.length < PAGE_SIZE) break;
+      }
+
+      sheet.commit();
+      await workbook.commit();
+    } catch (err) {
+      // Los headers ya salieron: no se puede devolver JSON, se corta la conexión
+      res.destroy(err as Error);
     }
-
-    const filename = `asistencia-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-
-    await workbook.xlsx.write(res);
-    res.end();
   }
 }

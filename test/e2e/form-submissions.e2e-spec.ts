@@ -164,7 +164,7 @@ describe('PATCH /api/form-submissions/:id/status', () => {
       .expect(403);
   });
 
-  it('should return 200 when ADMIN changes status to APPROVED', async () => {
+  it('should return 403 when ADMIN tries to approve manually (approval is automatic)', async () => {
     const org = await createTestOrg(prisma);
     const admin = await createTestUser(prisma, org.id, { role: UserRole.ADMIN });
     const operator = await createTestUser(prisma, org.id, { role: UserRole.OPERATOR });
@@ -190,13 +190,15 @@ describe('PATCH /api/form-submissions/:id/status', () => {
       role: 'ADMIN',
     });
 
-    const res = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .patch(`/api/form-submissions/${submission.id}/status`)
       .set('Authorization', `Bearer ${token}`)
       .send({ status: 'APPROVED' })
-      .expect(200);
+      .expect(403);
 
-    expect(res.body.success).toBe(true);
-    expect(res.body.data.status).toBe('APPROVED');
+    const unchanged = await prisma.formSubmission.findUnique({
+      where: { id: submission.id },
+    });
+    expect(unchanged?.status).not.toBe('APPROVED');
   });
 });

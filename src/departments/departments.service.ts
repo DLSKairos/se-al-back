@@ -4,12 +4,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { CACHE_TTL, cacheKeys } from '../common/cache-keys';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 
 @Injectable()
 export class DepartmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   /**
    * Devuelve los departamentos visibles para una organización:
@@ -18,15 +23,17 @@ export class DepartmentsService {
    * Los globales no se pueden editar ni eliminar desde aquí (solo desde seed).
    */
   async findAll(orgId: string) {
-    return this.prisma.department.findMany({
-      where: {
-        OR: [
-          { org_id: orgId, active: true },
-          { org_id: null, active: true },
-        ],
-      },
-      orderBy: { name: 'asc' },
-    });
+    return this.redis.remember(cacheKeys.departments(orgId), CACHE_TTL.CATALOG, () =>
+      this.prisma.department.findMany({
+        where: {
+          OR: [
+            { org_id: orgId, active: true },
+            { org_id: null, active: true },
+          ],
+        },
+        orderBy: { name: 'asc' },
+      }),
+    );
   }
 
   /**
@@ -62,13 +69,15 @@ export class DepartmentsService {
       );
     }
 
-    return this.prisma.department.create({
+    const created = await this.prisma.department.create({
       data: {
         org_id: orgId,
         name: dto.name,
         email: dto.email,
       },
     });
+    await this.invalidateCache(orgId);
+    return created;
   }
 
   /**
@@ -78,13 +87,15 @@ export class DepartmentsService {
   async update(id: string, orgId: string, dto: UpdateDepartmentDto) {
     await this.findOne(id, orgId);
 
-    return this.prisma.department.update({
+    const updated = await this.prisma.department.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.email !== undefined && { email: dto.email }),
       },
     });
+    await this.invalidateCache(orgId);
+    return updated;
   }
 
   /**
@@ -109,5 +120,15 @@ export class DepartmentsService {
       where: { id },
       data: { active: false },
     });
+    await this.invalidateCache(orgId);
+  }
+
+  /** Las ubicaciones cachean su departamento embebido: se invalidan también. */
+  private invalidateCache(orgId: string): Promise<void> {
+    return this.redis.safeDel(
+      cacheKeys.departments(orgId),
+      cacheKeys.locationsActive(orgId),
+      cacheKeys.locationsAll(orgId),
+    );
   }
 }

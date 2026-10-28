@@ -52,7 +52,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   private async loadAuthState(userId: string): Promise<AuthState | null> {
-    const cached = await this.redis.get(authStateKey(userId));
+    const cached = await this.redis.safeGet(authStateKey(userId));
     if (cached) {
       try {
         return JSON.parse(cached) as AuthState;
@@ -73,7 +73,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: user.role,
       org_id: user.org_id,
     };
-    await this.redis.set(
+    await this.redis.safeSet(
       authStateKey(userId),
       JSON.stringify(state),
       AUTH_STATE_TTL_SECONDS,

@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
+import { CACHE_TTL, cacheKeys } from '../common/cache-keys';
 import { CreateWorkLocationDto } from './dto/create-work-location.dto';
 import { UpdateWorkLocationDto } from './dto/update-work-location.dto';
 
@@ -14,24 +16,31 @@ interface Coordinates {
 
 @Injectable()
 export class WorkLocationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   // ─── Consultas ─────────────────────────────────────────────────────────────
 
   async findActive(orgId: string) {
-    return this.prisma.workLocation.findMany({
-      where: { org_id: orgId, is_active: true },
-      include: { department: true },
-      orderBy: { name: 'asc' },
-    });
+    return this.redis.remember(cacheKeys.locationsActive(orgId), CACHE_TTL.CATALOG, () =>
+      this.prisma.workLocation.findMany({
+        where: { org_id: orgId, is_active: true },
+        include: { department: true },
+        orderBy: { name: 'asc' },
+      }),
+    );
   }
 
   async findAll(orgId: string) {
-    return this.prisma.workLocation.findMany({
-      where: { org_id: orgId },
-      include: { department: true },
-      orderBy: { name: 'asc' },
-    });
+    return this.redis.remember(cacheKeys.locationsAll(orgId), CACHE_TTL.CATALOG, () =>
+      this.prisma.workLocation.findMany({
+        where: { org_id: orgId },
+        include: { department: true },
+        orderBy: { name: 'asc' },
+      }),
+    );
   }
 
   // ─── Mutaciones ────────────────────────────────────────────────────────────
@@ -53,7 +62,7 @@ export class WorkLocationsService {
       );
     }
 
-    return this.prisma.workLocation.create({
+    const created = await this.prisma.workLocation.create({
       data: {
         org_id: orgId,
         name: dto.name,
@@ -64,6 +73,8 @@ export class WorkLocationsService {
       },
       include: { department: true },
     });
+    await this.invalidateCache(orgId);
+    return created;
   }
 
   async update(id: string, orgId: string, dto: UpdateWorkLocationDto) {
@@ -79,7 +90,7 @@ export class WorkLocationsService {
       coords = await this.geocodeAddress(dto.address);
     }
 
-    return this.prisma.workLocation.update({
+    const updated = await this.prisma.workLocation.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
@@ -93,15 +104,23 @@ export class WorkLocationsService {
       },
       include: { department: true },
     });
+    await this.invalidateCache(orgId);
+    return updated;
   }
 
   async toggleActive(id: string, orgId: string) {
     const location = await this.assertExists(id, orgId);
 
-    return this.prisma.workLocation.update({
+    const toggled = await this.prisma.workLocation.update({
       where: { id },
       data: { is_active: !location.is_active },
     });
+    await this.invalidateCache(orgId);
+    return toggled;
+  }
+
+  private invalidateCache(orgId: string): Promise<void> {
+    return this.redis.safeDel(cacheKeys.locationsActive(orgId), cacheKeys.locationsAll(orgId));
   }
 
   // ─── Geocoding ─────────────────────────────────────────────────────────────
