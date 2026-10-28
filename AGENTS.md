@@ -22,7 +22,7 @@ El backend fue refactorizado de Express puro + raw SQL a **NestJS + Prisma**, po
 - **Dates:** Luxon (timezone-aware, Colombia/Bogotá)
 - **Export:** pdfmake (PDF), exceljs + xlsx (Excel), mammoth (docx → texto)
 - **Testing:** Jest — unit, integration (BD real), e2e (servidor vivo)
-- **Infra:** Docker (Node 20 + LibreOffice), HTTPS local con certificados PEM
+- **Infra:** Docker (Node 20 alpine), HTTPS local con certificados PEM
 
 ---
 

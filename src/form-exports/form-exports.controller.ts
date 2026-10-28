@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Controller,
   Get,
   Param,
@@ -44,17 +43,11 @@ export class FormExportsController {
     @CurrentUser() user: JwtPayload,
     @Res({ passthrough: false }) res: Response,
   ) {
-    if (!query.template_id || !query.from || !query.to) {
-      throw new BadRequestException(
-        'Se requieren los parámetros: template_id, from, to',
-      );
-    }
-
-    const buffer = await this.formExportsService.exportBatchExcel(
+    const report = await this.formExportsService.prepareBatchExcel(
       query.template_id,
       user.orgId,
-      new Date(query.from),
-      new Date(query.to),
+      query.from,
+      query.to,
     );
 
     const filename = `reporte-${query.template_id}-${query.from}_${query.to}.xlsx`;
@@ -64,8 +57,13 @@ export class FormExportsController {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', buffer.length);
-    res.send(buffer);
+
+    try {
+      await report.write(res);
+    } catch (err) {
+      // Los headers ya salieron: no se puede devolver JSON, se corta la conexión
+      res.destroy(err as Error);
+    }
   }
 
   /**
